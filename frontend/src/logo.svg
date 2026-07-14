@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60">
+  <defs>
+    <linearGradient id="red" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e63946"/>
+      <stop offset="100%" style="stop-color:#a4161a"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield icon -->
+  <path d="M30 5 L50 15 L50 35 C50 48 40 55 30 58 C20 55 10 48 10 35 L10 15 Z" fill="url(#red)" stroke="#c1121f" stroke-width="1.5"/>
+  <!-- Sword -->
+  <line x1="30" y1="12" x2="30" y2="42" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="22" y1="22" x2="38" y2="22" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="30" cy="42" r="2" fill="#fff"/>
+  <!-- Text -->
+  <text x="62" y="38" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#e63946">DOTA 2</text>
+  <text x="62" y="52" font-family="Arial, sans-serif" font-size="10" fill="#888">PRO MATCHES</text>
+</svg>
