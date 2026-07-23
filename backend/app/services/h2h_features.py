@@ -1,13 +1,11 @@
-from datetime import datetime
 from sqlalchemy.orm import Session
 from backend.app.models.models import Match, Team, Tournament
-
-PLAYER_COLS_T1 = ["player1_1", "player1_2", "player1_3", "player1_4", "player1_5"]
-PLAYER_COLS_T2 = ["player2_1", "player2_2", "player2_3", "player2_4", "player2_5"]
+from backend.app.utils import dedup_matches
+from backend.app.constants import PLAYER_COLS_T1, PLAYER_COLS_T2
 
 
 def _get_h2h_matches(team1: str, team2: str, db: Session):
-    return (
+    rows = (
         db.query(Match)
         .filter(
             ((Match.team1 == team1) & (Match.team2 == team2))
@@ -16,6 +14,7 @@ def _get_h2h_matches(team1: str, team2: str, db: Session):
         .order_by(Match.match_datetime)
         .all()
     )
+    return dedup_matches(rows)
 
 
 def get_h2h(team1: str, team2: str, db: Session):
@@ -40,7 +39,7 @@ def get_h2h(team1: str, team2: str, db: Session):
             "team1_wr": 0.5,
             "team2_wr": 0.5,
             "h2h_score_diff": 0,
-            "recent_5": [],
+            "recent_5": {"total": 0, "team1_wins": 0, "team2_wins": 0},
             "recent_10_wr": 0.5,
             "match_history": [],
         }

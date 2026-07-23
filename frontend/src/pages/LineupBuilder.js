@@ -9,7 +9,7 @@ const POSITIONS = [
   { key: 'sup5', label: 'Position 5 — Hard Support', abbr: 'P5' },
 ];
 
-function PlayerSlot({ position, selected, onSelect, onClear }) {
+function PlayerSlot({ position, selected, onSelect, onClear, takenIds }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [showDrop, setShowDrop] = useState(false);
@@ -27,6 +27,7 @@ function PlayerSlot({ position, selected, onSelect, onClear }) {
   }, []);
 
   const pick = (p) => {
+    if (takenIds.includes(p.player_id)) return;
     onSelect(p);
     setQuery(p.player_name);
     setShowDrop(false);
@@ -52,15 +53,19 @@ function PlayerSlot({ position, selected, onSelect, onClear }) {
         />
         {showDrop && results.length > 0 && (
           <div className="slot-dropdown">
-            {results.map(p => (
-              <div
-                key={p.player_id}
-                className="slot-dropdown-item"
-                onMouseDown={() => pick(p)}
-              >
-                {p.player_name}
-              </div>
-            ))}
+            {results.map(p => {
+              const taken = takenIds.includes(p.player_id);
+              return (
+                <div
+                  key={p.player_id}
+                  className={`slot-dropdown-item ${taken ? 'taken' : ''}`}
+                  onMouseDown={() => !taken && pick(p)}
+                  style={taken ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
+                >
+                  {p.player_name} {taken ? '(already selected)' : ''}
+                </div>
+              );
+            })}
           </div>
         )}
         {searching && <span className="slot-searching">Searching...</span>}
@@ -103,10 +108,10 @@ function SynergyMatrix({ matrix, players }) {
         </tbody>
       </table>
       <div className="synergy-legend">
-        <span className="legend-low">0</span>
+        <span>0</span>
         <div className="legend-gradient" />
-        <span className="legend-high">{maxMatches}</span>
-        <span className="legend-label">shared matches</span>
+        <span>{maxMatches}</span>
+        <span className="muted-text">shared matches</span>
       </div>
     </div>
   );
@@ -147,8 +152,8 @@ export default function LineupBuilder() {
 
   return (
     <div>
-      <h2 style={{ marginBottom: 8 }}>Lineup Builder</h2>
-      <p style={{ color: '#888', marginBottom: 20, fontSize: '0.9rem' }}>
+      <h2 className="page-title">Lineup Builder</h2>
+      <p className="page-desc">
         Select 5 players by position, then analyze their synergy, shared history, and similar lineups.
       </p>
 
@@ -160,6 +165,7 @@ export default function LineupBuilder() {
             selected={slots[i]}
             onSelect={(p) => setPlayer(i, p)}
             onClear={() => clearPlayer(i)}
+            takenIds={slots.filter(s => s !== null).map(s => s.player_id)}
           />
         ))}
       </div>
@@ -183,7 +189,6 @@ export default function LineupBuilder() {
 
       {result && (
         <div className="lineup-result">
-          {/* Player Cards */}
           <div className="player-cards">
             {result.player_cards.map((pc, i) => (
               <div key={i} className="player-card">
@@ -199,7 +204,6 @@ export default function LineupBuilder() {
             ))}
           </div>
 
-          {/* Combined Stats */}
           <div className="combined-stats">
             <h3>Combined Overview</h3>
             <div className="cs-grid">
@@ -224,7 +228,6 @@ export default function LineupBuilder() {
             </div>
           </div>
 
-          {/* Exact Lineup History */}
           {result.exact_lineup_history.matches > 0 && (
             <div className="lineup-history">
               <h3>Exact Lineup History</h3>
@@ -249,26 +252,24 @@ export default function LineupBuilder() {
           {result.exact_lineup_history.matches === 0 && (
             <div className="lineup-history">
               <h3>Exact Lineup History</h3>
-              <p style={{ color: '#888', fontSize: '0.9rem' }}>
+              <p className="muted-text">
                 This exact 5-man lineup has never played together before.
               </p>
             </div>
           )}
 
-          {/* Pair Synergy Matrix */}
           <div className="synergy-section">
             <h3>Pair Synergy Matrix</h3>
-            <p style={{ color: '#888', fontSize: '0.85rem', marginBottom: 12 }}>
+            <p className="muted-text" style={{ marginBottom: 12 }}>
               Number of matches each pair of players has been on the same team.
             </p>
             <SynergyMatrix matrix={result.pair_synergy_matrix} players={result.player_cards} />
           </div>
 
-          {/* Similar Lineups */}
           {result.similar_lineups.length > 0 && (
             <div className="similar-section">
               <h3>Similar Lineups</h3>
-              <p style={{ color: '#888', fontSize: '0.85rem', marginBottom: 12 }}>
+              <p className="muted-text" style={{ marginBottom: 12 }}>
                 Historical lineups sharing 3+ players with this roster.
               </p>
               <table className="data-table">

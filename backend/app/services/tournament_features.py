@@ -1,11 +1,8 @@
-from datetime import datetime
 from collections import defaultdict
-from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from backend.app.models.models import Match, Player, Team, Tournament
-
-PLAYER_COLS_T1 = ["player1_1", "player1_2", "player1_3", "player1_4", "player1_5"]
-PLAYER_COLS_T2 = ["player2_1", "player2_2", "player2_3", "player2_4", "player2_5"]
+from sqlalchemy.orm import Session
+from backend.app.models.models import Match, Tournament
+from backend.app.utils import dedup_matches
 
 
 def _detect_champion(tournament_id: int, db: Session):
@@ -74,18 +71,31 @@ def get_tournament_list(db: Session, limit: int = 50, offset: int = 0):
         .all()
     )
 
+    tournament_ids = [t.tournament_id for t in tournaments]
+    all_matches = db.query(Match).filter(Match.tournament_id.in_(tournament_ids)).all()
+    matches_by_tid = defaultdict(list)
+    for m in all_matches:
+        matches_by_tid[m.tournament_id].append(m)
+
+    finals = db.query(Match).filter(
+        Match.tournament_id.in_(tournament_ids),
+        Match.best_of.in_([3, 5])
+    ).order_by(desc(Match.match_datetime)).all()
+    finals_by_tid = {}
+    for f in finals:
+        if f.tournament_id not in finals_by_tid:
+            finals_by_tid[f.tournament_id] = f
+
     results = []
     for t in tournaments:
-        matches = (
-            db.query(Match).filter(Match.tournament_id == t.tournament_id).all()
-        )
+        rows = matches_by_tid.get(t.tournament_id, [])
+        matches = dedup_matches(rows)
         if not matches:
             continue
 
-        match_df_like = list(matches)
-        dates = [m.match_datetime for m in match_df_like if m.match_datetime]
+        dates = [m.match_datetime for m in matches if m.match_datetime]
         teams = set()
-        for m in match_df_like:
+        for m in matches:
             teams.add(m.team1)
             teams.add(m.team2)
 
@@ -93,7 +103,15 @@ def get_tournament_list(db: Session, limit: int = 50, offset: int = 0):
         end_date = max(dates) if dates else None
         duration = (end_date - start_date).days if start_date and end_date else 0
 
-        final = _detect_champion(t.tournament_id, db)
+        final_match = finals_by_tid.get(t.tournament_id)
+        final = None
+        if final_match:
+            final = {
+                "champion": final_match.team1 if final_match.team1_win else final_match.team2,
+                "runner_up": final_match.team2 if final_match.team1_win else final_match.team1,
+                "score": f"{final_match.score1}-{final_match.score2}",
+                "final_format": f"Bo{final_match.best_of}",
+            }
 
         results.append(
             {
@@ -102,7 +120,7 @@ def get_tournament_list(db: Session, limit: int = 50, offset: int = 0):
                 "start_date": start_date.isoformat() if start_date else None,
                 "end_date": end_date.isoformat() if end_date else None,
                 "duration": duration,
-                "total_matches": len(match_df_like),
+                "total_matches": len(matches),
                 "total_teams": len(teams),
                 "tier": _infer_tier(t.tournament_name),
                 "champion": final["champion"] if final else None,
@@ -118,9 +136,10 @@ def get_tournament_detail(tournament_id: int, db: Session):
     if not t:
         return None
 
-    matches = (
+    rows = (
         db.query(Match).filter(Match.tournament_id == tournament_id).all()
     )
+    matches = dedup_matches(rows)
     if not matches:
         return {
             "tournament_id": tournament_id,
@@ -167,9 +186,10 @@ def get_tournament_standings(tournament_id: int, db: Session):
     if not t:
         return None
 
-    matches = (
+    rows = (
         db.query(Match).filter(Match.tournament_id == tournament_id).all()
     )
+    matches = dedup_matches(rows)
     if not matches:
         return {"tournament_id": tournament_id, "group": [], "playoff": []}
 

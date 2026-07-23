@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import Optional
+import json
 
 from backend.app.database import get_db
-from backend.app.models.models import Match, Team, Tournament
+from backend.app.models.models import Match, Team, Tournament, MatchDetail, MatchPlayerStat, Hero
 
 router = APIRouter()
 
@@ -16,20 +17,30 @@ def list_matches(
     team: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    query = db.query(Match, Tournament.tournament_name).join(
-        Tournament, Match.tournament_id == Tournament.tournament_id, isouter=True
+    subq = (
+        db.query(
+            Match.match_id,
+            func.min(Match.id).label("min_rowid"),
+        )
+        .group_by(Match.match_id)
     )
 
     if team:
-        query = query.filter(
+        subq = subq.filter(
             (Match.team1.ilike(f"%{team}%")) | (Match.team2.ilike(f"%{team}%"))
         )
 
-    total = db.query(Match).filter(
-        (Match.team1.ilike(f"%{team}%")) | (Match.team2.ilike(f"%{team}%"))
-    ).count() if team else db.query(func.count(Match.id)).scalar()
+    subq = subq.subquery()
 
-    rows = query.order_by(desc(Match.match_datetime)).offset(offset).limit(limit).all()
+    query = (
+        db.query(Match, Tournament.tournament_name)
+        .join(subq, Match.id == subq.c.min_rowid)
+        .join(Tournament, Match.tournament_id == Tournament.tournament_id, isouter=True)
+        .order_by(desc(Match.match_datetime))
+    )
+
+    total = db.query(func.count()).select_from(subq).scalar()
+    rows = query.offset(offset).limit(limit).all()
 
     return {
         "total": total,
@@ -58,9 +69,15 @@ def team_stats(team_name: str, db: Session = Depends(get_db)):
         return {"error": "Team not found"}
 
     name = team.team_name
-    matches = db.query(Match).filter(
+    rows = db.query(Match).filter(
         (Match.team1 == name) | (Match.team2 == name)
     ).order_by(desc(Match.match_datetime)).all()
+    seen = set()
+    matches = []
+    for m in rows:
+        if m.match_id not in seen:
+            seen.add(m.match_id)
+            matches.append(m)
 
     if not matches:
         return {"team": name, "total_matches": 0}
@@ -86,6 +103,83 @@ def team_stats(team_name: str, db: Session = Depends(get_db)):
         "losses": len(matches) - wins,
         "win_rate": round(wins / len(matches), 4),
         "recent_5": recent_5,
+    }
+
+
+@router.get("/{match_id}/detail")
+def match_detail(match_id: int, db: Session = Depends(get_db)):
+    game = db.query(Match).filter(Match.match_id == match_id).first()
+    if not game:
+        return {"error": "Match not found"}
+
+    if not game.dota_game_id:
+        return {"error": "No game data available for this match"}
+
+    detail = db.query(MatchDetail).filter(MatchDetail.dota_game_id == game.dota_game_id).first()
+    if not detail:
+        return {"error": "Game data not yet fetched from OpenDota", "dota_game_id": game.dota_game_id}
+
+    stats = (
+        db.query(MatchPlayerStat)
+        .filter(MatchPlayerStat.dota_game_id == game.dota_game_id)
+        .order_by(MatchPlayerStat.player_slot)
+        .all()
+    )
+
+    hero_ids = set(s.hero_id for s in stats if s.hero_id)
+    heroes = db.query(Hero).filter(Hero.hero_id.in_(hero_ids)).all() if hero_ids else []
+    hero_map = {h.hero_id: h.localized_name for h in heroes}
+
+    players = []
+    for s in stats:
+        is_radiant = s.player_slot < 128
+        position = s.player_slot if is_radiant else s.player_slot - 128
+        players.append({
+            "player_slot": s.player_slot,
+            "team": "radiant" if is_radiant else "dire",
+            "position": position,
+            "hero_id": s.hero_id,
+            "hero_name": hero_map.get(s.hero_id, f"Hero {s.hero_id}"),
+            "kills": s.kills,
+            "deaths": s.deaths,
+            "assists": s.assists,
+            "gold_per_min": s.gold_per_min,
+            "xp_per_min": s.xp_per_min,
+            "last_hits": s.last_hits,
+            "denies": s.denies,
+            "hero_damage": s.hero_damage,
+            "tower_damage": s.tower_damage,
+            "hero_healing": s.hero_healing,
+            "net_worth": s.net_worth,
+            "level": s.level,
+            "win": s.win,
+        })
+
+    picks_bans = None
+    if detail.picks_bans:
+        try:
+            picks_bans = json.loads(detail.picks_bans)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    t = db.query(Tournament).filter(Tournament.tournament_id == game.tournament_id).first()
+
+    return {
+        "match_id": game.match_id,
+        "dota_game_id": game.dota_game_id,
+        "tournament": t.tournament_name if t else "Unknown",
+        "team1": game.team1,
+        "team2": game.team2,
+        "duration": detail.duration,
+        "radiant_win": detail.radiant_win,
+        "radiant_score": detail.radiant_score,
+        "dire_score": detail.dire_score,
+        "game_mode": detail.game_mode,
+        "patch": detail.patch,
+        "start_time": detail.start_time,
+        "picks_bans": picks_bans,
+        "players": players,
+        "datetime": game.match_datetime.isoformat() if game.match_datetime else None,
     }
 
 

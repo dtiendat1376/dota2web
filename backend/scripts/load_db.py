@@ -4,7 +4,7 @@ import os
 import sys
 import json
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from backend.app.database import engine, SessionLocal, Base
 from backend.app.models.models import Player, Team, Tournament, Match
@@ -80,7 +80,7 @@ def load_matches(session, alias_map):
             match_id=r["match_id"],
             game_id=r["game_id"] if pd.notna(r["game_id"]) else None,
             dota_game_id=r["dota_game_id"] if pd.notna(r["dota_game_id"]) else None,
-            has_game_data=bool(r["has_game_data"]),
+            has_game_data=bool(r["has_game_data"]) if pd.notna(r["has_game_data"]) else False,
             team1=team1,
             team2=team2,
             score1=r["score1"],

@@ -1,11 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict, Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
-from backend.app.models.models import Match, Player, Team, Tournament
+from backend.app.models.models import Match, Player, Tournament, PlayerIdMap
+from backend.app.utils import dedup_matches, did_player_win, get_player_match_info, get_player_team
+from backend.app.constants import PLAYER_COLS_T1, PLAYER_COLS_T2, POS_NAMES, OPENDOTA_BASE, OPENDOTA_TIMEOUT
+import requests
+import logging
 
-PLAYER_COLS_T1 = ["player1_1", "player1_2", "player1_3", "player1_4", "player1_5"]
-PLAYER_COLS_T2 = ["player2_1", "player2_2", "player2_3", "player2_4", "player2_5"]
-POS_NAMES = ["carry", "mid", "offlane", "sup4", "sup5"]
+logger = logging.getLogger("player_features")
 
 
 def get_player_profile(player_id: int, db: Session):
@@ -13,7 +16,7 @@ def get_player_profile(player_id: int, db: Session):
     if not player:
         return None
 
-    matches = (
+    rows = (
         db.query(Match)
         .filter(
             (Match.player1_1 == player_id)
@@ -30,6 +33,7 @@ def get_player_profile(player_id: int, db: Session):
         .order_by(Match.match_datetime)
         .all()
     )
+    matches = dedup_matches(rows)
 
     if not matches:
         return {
@@ -43,7 +47,7 @@ def get_player_profile(player_id: int, db: Session):
             "streak": 0,
         }
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     total = len(matches)
     wins = 0
     team_data = defaultdict(
@@ -51,28 +55,10 @@ def get_player_profile(player_id: int, db: Session):
     )
 
     for m in matches:
-        found = False
-        team = pos = None
-        won = False
-
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id:
-                team = m.team1
-                won = m.team1_win
-                pos = POS_NAMES[i]
-                found = True
-                break
-        if not found:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id:
-                    team = m.team2
-                    won = not m.team1_win
-                    pos = POS_NAMES[i]
-                    found = True
-                    break
-
-        if not found:
+        info = get_player_match_info(m, player_id)
+        if not info:
             continue
+        team, won, pos = info
 
         if won:
             wins += 1
@@ -89,63 +75,23 @@ def get_player_profile(player_id: int, db: Session):
         all_positions.update(td["positions"])
     primary_position = all_positions.most_common(1)[0][0] if all_positions else None
 
+    current_team = get_player_team(matches[-1], player_id)
+
     sorted_teams = sorted(
         team_data.items(), key=lambda x: min(x[1]["dates"]) if x[1]["dates"] else datetime.max
     )
-    current_team = sorted_teams[-1][0] if sorted_teams else None
 
     last5 = matches[-5:]
     last10 = matches[-10:]
     last20 = matches[-20:]
 
-    last5_wins = 0
-    for m in last5:
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id and m.team1_win:
-                last5_wins += 1
-                break
-        else:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id and not m.team1_win:
-                    last5_wins += 1
-                    break
-
-    last10_wins = 0
-    for m in last10:
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id and m.team1_win:
-                last10_wins += 1
-                break
-        else:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id and not m.team1_win:
-                    last10_wins += 1
-                    break
-
-    last20_wins = 0
-    for m in last20:
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id and m.team1_win:
-                last20_wins += 1
-                break
-        else:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id and not m.team1_win:
-                    last20_wins += 1
-                    break
+    last5_wins = sum(1 for m in last5 if did_player_win(m, player_id))
+    last10_wins = sum(1 for m in last10 if did_player_win(m, player_id))
+    last20_wins = sum(1 for m in last20 if did_player_win(m, player_id))
 
     streak = 0
     for m in reversed(matches):
-        won = False
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id:
-                won = m.team1_win
-                break
-        if not won:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id:
-                    won = not m.team1_win
-                    break
+        won = did_player_win(m, player_id)
 
         if streak == 0:
             streak = 1 if won else -1
@@ -173,31 +119,12 @@ def get_player_profile(player_id: int, db: Session):
         for m in matches
         if m.match_datetime and m.match_datetime.year >= 2024
     ]
-    recent_2024_wins = 0
-    for m in recent_2024:
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id and m.team1_win:
-                recent_2024_wins += 1
-                break
-        else:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id and not m.team1_win:
-                    recent_2024_wins += 1
-                    break
+    recent_2024_wins = sum(1 for m in recent_2024 if did_player_win(m, player_id))
 
     longest_win = longest_loss = 0
     cur_w = cur_l = 0
     for m in matches:
-        won = False
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id:
-                won = m.team1_win
-                break
-        if not won:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id:
-                    won = not m.team1_win
-                    break
+        won = did_player_win(m, player_id)
         if won:
             cur_w += 1
             cur_l = 0
@@ -214,17 +141,7 @@ def get_player_profile(player_id: int, db: Session):
     tourn_wins = []
     bo5_matches = [m for m in matches if m.best_of == 5]
     for m in bo5_matches:
-        won = False
-        for i, col in enumerate(PLAYER_COLS_T1):
-            if getattr(m, col) == player_id:
-                won = m.team1_win
-                break
-        if not won:
-            for i, col in enumerate(PLAYER_COLS_T2):
-                if getattr(m, col) == player_id:
-                    won = not m.team1_win
-                    break
-        if won:
+        if did_player_win(m, player_id):
             t = db.query(Tournament).filter(Tournament.tournament_id == m.tournament_id).first()
             tourn_wins.append(
                 {
@@ -284,3 +201,79 @@ def get_player_team_list(player_id: int, db: Session):
     if not profile:
         return None
     return profile["team_history"]
+
+
+def get_steam32_id(player_name: str, db: Session):
+    mapping = db.query(PlayerIdMap).filter(
+        PlayerIdMap.player_name == player_name,
+        PlayerIdMap.steam32_id.isnot(None)
+    ).order_by(PlayerIdMap.confidence.desc()).first()
+    if mapping:
+        return {
+            "steam32_id": mapping.steam32_id,
+            "confidence": mapping.confidence,
+            "team_name": mapping.team_name,
+        }
+    return None
+
+
+def get_player_career(steam32_id: int):
+    endpoints = {
+        "profile": f"{OPENDOTA_BASE}/api/players/{steam32_id}",
+        "wl": f"{OPENDOTA_BASE}/api/players/{steam32_id}/wl",
+        "heroes": f"{OPENDOTA_BASE}/api/players/{steam32_id}/heroes",
+        "recent": f"{OPENDOTA_BASE}/api/players/{steam32_id}/recentMatches",
+    }
+
+    results = {}
+    def fetch(name, url):
+        try:
+            resp = requests.get(url, timeout=OPENDOTA_TIMEOUT)
+            resp.raise_for_status()
+            return name, resp.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch {name} for {steam32_id}: {e}")
+            return name, None
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(fetch, name, url): name for name, url in endpoints.items()}
+        for future in as_completed(futures):
+            name, data = future.result()
+            results[name] = data
+
+    profile = results.get("profile") or {}
+    wl = results.get("wl") or {"win": 0, "lose": 0}
+    heroes = (results.get("heroes") or [])[:10]
+    recent = (results.get("recent") or [])[:10]
+
+    total = wl.get("win", 0) + wl.get("lose", 0)
+    return {
+        "steam32_id": steam32_id,
+        "profile": profile.get("profile", {}),
+        "win": wl.get("win", 0),
+        "lose": wl.get("lose", 0),
+        "total": total,
+        "win_rate": round(wl.get("win", 0) / total, 4) if total > 0 else 0.5,
+        "top_heroes": [
+            {
+                "hero_id": h.get("hero_id"),
+                "games": h.get("games", 0),
+                "win": h.get("win", 0),
+                "win_rate": round(h.get("win", 0) / h.get("games", 1), 4),
+            }
+            for h in heroes if h.get("games", 0) > 0
+        ],
+        "recent_matches": [
+            {
+                "match_id": m.get("match_id"),
+                "hero_id": m.get("hero_id"),
+                "win": (m.get("player_slot", 0) < 128) == m.get("radiant_win", False),
+                "kills": m.get("kills", 0),
+                "deaths": m.get("deaths", 0),
+                "assists": m.get("assists", 0),
+                "duration": m.get("duration", 0),
+                "start_time": m.get("start_time"),
+            }
+            for m in recent
+        ],
+    }

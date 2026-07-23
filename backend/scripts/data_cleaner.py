@@ -18,11 +18,11 @@ def clean_all_tiers():
     teams_clean["team_id"] = teams_clean["team_id"].astype(int)
     team_map = dict(zip(teams_clean["team_id"], teams_clean["team_name"]))
     df["team1"] = df.apply(
-        lambda r: team_map.get(int(r["team1_id"]), r["team1"]) if pd.isna(r["team1"]) else r["team1"],
+        lambda r: team_map.get(int(r["team1_id"]), r["team1"]) if pd.isna(r["team1"]) and pd.notna(r["team1_id"]) else r["team1"],
         axis=1,
     )
     df["team2"] = df.apply(
-        lambda r: team_map.get(int(r["team2_id"]), r["team2"]) if pd.isna(r["team2"]) else r["team2"],
+        lambda r: team_map.get(int(r["team2_id"]), r["team2"]) if pd.isna(r["team2"]) and pd.notna(r["team2_id"]) else r["team2"],
         axis=1,
     )
 

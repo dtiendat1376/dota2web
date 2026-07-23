@@ -1,22 +1,20 @@
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter, defaultdict
 from sqlalchemy.orm import Session
 from backend.app.models.models import Match, Player, Team, Tournament
-
-PLAYER_COLS_T1 = ["player1_1", "player1_2", "player1_3", "player1_4", "player1_5"]
-PLAYER_COLS_T2 = ["player2_1", "player2_2", "player2_3", "player2_4", "player2_5"]
-POS_NAMES = ["carry", "mid", "offlane", "sup4", "sup5"]
+from backend.app.utils import dedup_matches, did_player_win
+from backend.app.constants import PLAYER_COLS_T1, PLAYER_COLS_T2, POS_NAMES
 
 
 def _get_team_matches(team_name: str, db: Session):
-    matches = (
+    rows = (
         db.query(Match)
         .filter((Match.team1 == team_name) | (Match.team2 == team_name))
         .order_by(Match.match_datetime)
         .all()
     )
-    return matches
+    return dedup_matches(rows)
 
 
 def _is_win(match, team_name: str) -> bool:
@@ -139,7 +137,7 @@ def get_team_features(team_name: str, db: Session):
     if not matches:
         return None
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     total = len(matches)
     wins = sum(1 for m in matches if _is_win(m, team_name))
 
@@ -200,7 +198,11 @@ def get_team_features(team_name: str, db: Session):
                 decay_wins += w
     roster_decay_wr = decay_wins / decay_weight_total if decay_weight_total else 0.5
 
-    roster_changes = max(0, len(eras) - 1)
+    six_months_ago = now - timedelta(days=180)
+    roster_changes = sum(
+        1 for era in eras
+        if era["start"] and era["start"] >= six_months_ago
+    )
 
     bo1_matches = [m for m in matches if m.best_of == 1]
     bo3_matches = [m for m in matches if m.best_of == 3]
@@ -228,15 +230,6 @@ def get_team_features(team_name: str, db: Session):
         else 0.5
     )
 
-    tier_wr = {"tier1": None, "tier2": None, "tier3": None, "other": None}
-    for tier_key, suffix in [
-        ("tier1", "_t1"),
-        ("tier2", "_t2"),
-        ("tier3", "_t3"),
-        ("other", "_other"),
-    ]:
-        pass
-
     player_ids_by_slot = defaultdict(lambda: {"matches": 0, "wins": 0})
     for m in matches:
         if m.team1 == team_name:
@@ -259,6 +252,24 @@ def get_team_features(team_name: str, db: Session):
             round(slot["wins"] / slot["matches"], 4) if slot["matches"] else 0.5
         )
 
+    recent_matches = []
+    for m in reversed(matches[-20:]):
+        opponent = m.team2 if m.team1 == team_name else m.team1
+        won = _is_win(m, team_name)
+        score = f"{m.score1}-{m.score2}"
+        tournament = None
+        if m.tournament_id:
+            t = db.query(Tournament).filter(Tournament.tournament_id == m.tournament_id).first()
+            tournament = t.tournament_name if t else None
+        recent_matches.append({
+            "opponent": opponent,
+            "won": won,
+            "score": score,
+            "best_of": m.best_of,
+            "date": m.match_datetime.isoformat() if m.match_datetime else None,
+            "tournament": tournament,
+        })
+
     return {
         "team_name": team_name,
         "win_rate": round(wins / total, 4),
@@ -279,11 +290,9 @@ def get_team_features(team_name: str, db: Session):
         if recent10_diffs
         else 0,
         "roster_win_rate": round(roster_win_rate, 4),
-        "roster_recent_5_wr": None,
         "roster_decay_wr": round(roster_decay_wr, 4),
         "roster_days": roster_days,
         "roster_changes_6m": roster_changes,
-        "lineup_overlap": None,
         "bo1_wr": round(bo1_wr, 4),
         "bo3_wr": round(bo3_wr, 4),
         "bo5_wr": round(bo5_wr, 4),
@@ -295,5 +304,6 @@ def get_team_features(team_name: str, db: Session):
         "avg_gap_between_matches": round(sum(gaps) / len(gaps), 1) if gaps else 0,
         "days_since_first": days_since_first,
         "current_lineup": lineup,
+        "recent_matches": recent_matches,
         "player_slot_wr": player_slot_wr,
     }

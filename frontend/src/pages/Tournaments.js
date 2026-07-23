@@ -4,6 +4,7 @@ import { getTournaments, getTournamentDetail, getTournamentStandings } from '../
 export default function Tournaments() {
   const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
   const [standings, setStandings] = useState(null);
@@ -12,14 +13,15 @@ export default function Tournaments() {
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     getTournaments().then(data => {
       setTournaments(data.tournaments || []);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => { setError('Failed to load tournaments'); setLoading(false); });
   }, []);
 
   const filtered = tournaments.filter(t =>
-    !search || t.name.toLowerCase().includes(search.toLowerCase())
+    !search || t.tournament_name.toLowerCase().includes(search.toLowerCase())
   );
 
   const paged = filtered.slice(page * pageSize, (page + 1) * pageSize);
@@ -28,9 +30,37 @@ export default function Tournaments() {
   const selectTournament = (t) => {
     setSelected(t);
     setStandings(null);
-    getTournamentDetail(t.id).then(d => setSelected(d)).catch(() => {});
-    getTournamentStandings(t.id).then(d => setStandings(d)).catch(() => {});
+    getTournamentDetail(t.tournament_id).then(d => setSelected(d)).catch(() => {});
+    getTournamentStandings(t.tournament_id).then(d => setStandings(d)).catch(() => {});
   };
+
+  const renderStandingsTable = (teams, title) => (
+    <div className="standings-group">
+      <h4>{title}</h4>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Team</th>
+            <th>W</th>
+            <th>L</th>
+            <th>WR</th>
+          </tr>
+        </thead>
+        <tbody>
+          {teams.map((t, ti) => (
+            <tr key={ti}>
+              <td>{ti + 1}</td>
+              <td>{t.team}</td>
+              <td>{t.wins}</td>
+              <td>{t.losses}</td>
+              <td>{(t.win_rate * 100).toFixed(1)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   if (selected) {
     return (
@@ -41,11 +71,11 @@ export default function Tournaments() {
         <div className="tournament-detail">
           <div className="tournament-header">
             <div>
-              <h2>{selected.name}</h2>
+              <h2>{selected.tournament_name}</h2>
               <div className="tournament-meta">
                 <span className="tier-badge" data-tier={selected.tier}>{selected.tier}</span>
                 <span>{selected.start_date} — {selected.end_date}</span>
-                <span>{selected.num_matches} matches · {selected.num_games} games</span>
+                <span>{selected.total_matches} matches · {selected.total_teams} teams</span>
               </div>
             </div>
             {selected.champion && (
@@ -60,45 +90,23 @@ export default function Tournaments() {
           <div className="format-summary">
             <h3>Format Breakdown</h3>
             <div className="format-bars">
-              {Object.entries(selected.format_summary || {}).map(([fmt, count]) => (
+              {Object.entries(selected.best_of_distribution || {}).map(([fmt, count]) => (
                 <div key={fmt} className="format-item">
-                  <span className="format-label">{fmt}</span>
+                  <span className="format-label">Bo{fmt}</span>
                   <span className="format-count">{count}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {standings && standings.standings && standings.standings.length > 0 && (
+          {standings && (
             <div className="standings-section">
               <h3>Standings</h3>
-              {standings.standings.map((group, gi) => (
-                <div key={gi} className="standings-group">
-                  <h4>{group.group_name || 'Overall'}</h4>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Team</th>
-                        <th>W</th>
-                        <th>L</th>
-                        <th>WR</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.teams.map((t, ti) => (
-                        <tr key={ti}>
-                          <td>{ti + 1}</td>
-                          <td>{t.team}</td>
-                          <td>{t.wins}</td>
-                          <td>{t.losses}</td>
-                          <td>{t.winrate}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
+              {standings.group && standings.group.length > 0 && renderStandingsTable(standings.group, 'Group Stage')}
+              {standings.playoff && standings.playoff.length > 0 && renderStandingsTable(standings.playoff, 'Playoffs')}
+              {(!standings.group || standings.group.length === 0) && (!standings.playoff || standings.playoff.length === 0) && (
+                <p style={{ color: '#888', fontSize: '0.9rem' }}>No standings available for this tournament.</p>
+              )}
             </div>
           )}
         </div>
@@ -108,7 +116,7 @@ export default function Tournaments() {
 
   return (
     <div>
-      <h2 style={{ marginBottom: 16 }}>Tournaments</h2>
+      <h2 className="page-title">Tournaments</h2>
       <div className="controls">
         <input
           className="search-input"
@@ -119,7 +127,9 @@ export default function Tournaments() {
         <span className="count">{filtered.length} tournaments</span>
       </div>
 
-      {loading ? <div className="loading">Loading...</div> : (
+      {error && <div className="error">{error}</div>}
+
+      {loading ? <div className="loading">Loading tournaments...</div> : (
         <>
           <table className="data-table">
             <thead>
@@ -134,11 +144,11 @@ export default function Tournaments() {
             </thead>
             <tbody>
               {paged.map(t => (
-                <tr key={t.id}>
-                  <td>{t.name}</td>
+                <tr key={t.tournament_id}>
+                  <td>{t.tournament_name}</td>
                   <td><span className="tier-badge" data-tier={t.tier}>{t.tier}</span></td>
                   <td>{t.start_date} — {t.end_date}</td>
-                  <td>{t.num_matches}</td>
+                  <td>{t.total_matches}</td>
                   <td className="winner">{t.champion || '—'}</td>
                   <td>
                     <button className="detail-btn" onClick={() => selectTournament(t)}>

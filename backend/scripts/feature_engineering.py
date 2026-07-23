@@ -29,7 +29,7 @@ def compute_features_batch(df, team_matches, tier1_ids, tier2_ids, tier3_ids):
     total = len(df)
 
     for i, (_, row) in enumerate(df.iterrows()):
-        if i % 5000 == 0:
+        if i % 5000 == 0 and total > 0:
             print(f"  {i}/{total} ({i*100//total}%)")
 
         t1, t2 = row["team1"], row["team2"]

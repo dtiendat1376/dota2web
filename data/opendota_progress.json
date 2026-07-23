@@ -1,0 +1,11 @@
+{
+  "fetched_today": 276,
+  "fetched_total": 5341,
+  "failed": 16,
+  "not_found": 682,
+  "last_game_id": 4346925546,
+  "last_date": "2026-07-22",
+  "is_running": true,
+  "started_at": "2026-07-15T03:08:31.703324",
+  "last_fetch_at": "2026-07-22T09:51:57.043560+00:00"
+}

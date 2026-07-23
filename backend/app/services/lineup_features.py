@@ -1,16 +1,14 @@
-from collections import defaultdict, Counter
 from sqlalchemy.orm import Session
-from backend.app.models.models import Match, Player, Team, Tournament
-
-PLAYER_COLS_T1 = ["player1_1", "player1_2", "player1_3", "player1_4", "player1_5"]
-PLAYER_COLS_T2 = ["player2_1", "player2_2", "player2_3", "player2_4", "player2_5"]
-POS_NAMES = ["carry", "mid", "offlane", "sup4", "sup5"]
+from backend.app.models.models import Match, Player
+from backend.app.utils import dedup_matches, did_player_win
+from backend.app.constants import PLAYER_COLS_T1, PLAYER_COLS_T2, POS_NAMES
 
 
 def _get_player_match_ids(player_id: int, db: Session):
+    from sqlalchemy import distinct
     return set(
         row[0]
-        for row in db.query(Match.match_id)
+        for row in db.query(distinct(Match.match_id))
         .filter(
             (Match.player1_1 == player_id)
             | (Match.player1_2 == player_id)
@@ -29,7 +27,7 @@ def _get_player_match_ids(player_id: int, db: Session):
 
 def _get_player_career(player_id: int, db: Session):
     player = db.query(Player).filter(Player.player_id == player_id).first()
-    matches = (
+    rows = (
         db.query(Match)
         .filter(
             (Match.player1_1 == player_id)
@@ -45,18 +43,9 @@ def _get_player_career(player_id: int, db: Session):
         )
         .all()
     )
+    matches = dedup_matches(rows)
     total = len(matches)
-    wins = 0
-    for m in matches:
-        for col in PLAYER_COLS_T1:
-            if getattr(m, col) == player_id and m.team1_win:
-                wins += 1
-                break
-        else:
-            for col in PLAYER_COLS_T2:
-                if getattr(m, col) == player_id and not m.team1_win:
-                    wins += 1
-                    break
+    wins = sum(1 for m in matches if did_player_win(m, player_id))
 
     return {
         "player_id": player_id,
@@ -64,6 +53,7 @@ def _get_player_career(player_id: int, db: Session):
         "total_matches": total,
         "wins": wins,
         "win_rate": round(wins / total, 4) if total else 0.5,
+        "primary_position": None,
     }
 
 
@@ -76,21 +66,49 @@ def analyze_lineup(player_ids: list, db: Session):
             return {"error": "All 5 player IDs must be provided"}
 
     player_careers = []
-    for pid in player_ids:
-        career = _get_player_career(pid, db)
-        player_careers.append(career)
-
-    position_fit = True
-    assigned_positions = set()
-    for i, career in enumerate(player_careers):
-        pos = POS_NAMES[i]
-        if pos in assigned_positions:
-            position_fit = False
-        assigned_positions.add(pos)
-
     match_ids_per_player = {}
     for pid in player_ids:
-        match_ids_per_player[pid] = _get_player_match_ids(pid, db)
+        rows = (
+            db.query(Match)
+            .filter(
+                (Match.player1_1 == pid)
+                | (Match.player1_2 == pid)
+                | (Match.player1_3 == pid)
+                | (Match.player1_4 == pid)
+                | (Match.player1_5 == pid)
+                | (Match.player2_1 == pid)
+                | (Match.player2_2 == pid)
+                | (Match.player2_3 == pid)
+                | (Match.player2_4 == pid)
+                | (Match.player2_5 == pid)
+            )
+            .all()
+        )
+        matches = dedup_matches(rows)
+        match_ids_per_player[pid] = set(m.match_id for m in matches)
+        total = len(matches)
+        wins = sum(1 for m in matches if did_player_win(m, pid))
+        player = db.query(Player).filter(Player.player_id == pid).first()
+        player_careers.append({
+            "player_id": pid,
+            "player_name": player.player_name if player else str(pid),
+            "total_matches": total,
+            "wins": wins,
+            "win_rate": round(wins / total, 4) if total else 0.5,
+            "primary_position": None,
+        })
+
+    position_fit = True
+    mismatched_positions = []
+    for i, career in enumerate(player_careers):
+        assigned_pos = POS_NAMES[i]
+        if career.get("primary_position") and career["primary_position"] != assigned_pos:
+            position_fit = False
+            mismatched_positions.append({
+                "player": career["player_name"],
+                "assigned": assigned_pos,
+                "primary": career["primary_position"],
+            })
 
     pair_matrix = []
     for i in range(5):
@@ -118,8 +136,14 @@ def analyze_lineup(player_ids: list, db: Session):
 
     lineup_matches = 0
     lineup_wins = 0
+    matches_by_id = {}
+    if all_match_ids:
+        rows = db.query(Match).filter(Match.match_id.in_(all_match_ids)).all()
+        for m in rows:
+            matches_by_id[m.match_id] = m
+
     for mid in all_match_ids:
-        match = db.query(Match).filter(Match.match_id == mid).first()
+        match = matches_by_id.get(mid)
         if not match:
             continue
 
@@ -153,7 +177,7 @@ def analyze_lineup(player_ids: list, db: Session):
     similar = []
     all_lineup_keys = set()
     for mid in all_match_ids:
-        match = db.query(Match).filter(Match.match_id == mid).first()
+        match = matches_by_id.get(mid)
         if not match:
             continue
         for pcols in [PLAYER_COLS_T1, PLAYER_COLS_T2]:
@@ -165,6 +189,14 @@ def analyze_lineup(player_ids: list, db: Session):
             if len(pids) == 5:
                 all_lineup_keys.add(tuple(sorted(pids)))
 
+    all_pids_in_keys = set()
+    for key in all_lineup_keys:
+        all_pids_in_keys.update(key)
+    player_name_map = {}
+    if all_pids_in_keys:
+        for p in db.query(Player).filter(Player.player_id.in_(all_pids_in_keys)).all():
+            player_name_map[p.player_id] = p.player_name
+
     for other_key in all_lineup_keys:
         if other_key == lineup_key:
             continue
@@ -173,7 +205,7 @@ def analyze_lineup(player_ids: list, db: Session):
             overlap_count = 0
             overlap_wins = 0
             for mid in all_match_ids:
-                match = db.query(Match).filter(Match.match_id == mid).first()
+                match = matches_by_id.get(mid)
                 if not match:
                     continue
                 for pcols in [PLAYER_COLS_T1, PLAYER_COLS_T2]:
@@ -195,10 +227,7 @@ def analyze_lineup(player_ids: list, db: Session):
                             overlap_wins += 1
 
             if overlap_count >= 3:
-                names = []
-                for pid in sorted(other_key):
-                    p = db.query(Player).filter(Player.player_id == pid).first()
-                    names.append(p.player_name if p else str(pid))
+                names = [player_name_map.get(pid, str(pid)) for pid in sorted(other_key)]
                 similar.append(
                     {
                         "player_ids": list(other_key),
@@ -226,6 +255,7 @@ def analyze_lineup(player_ids: list, db: Session):
             for i, c in enumerate(player_careers)
         ],
         "position_fit": position_fit,
+        "mismatched_positions": mismatched_positions,
         "combined_stats": {
             "avg_wr": round(avg_wr, 4),
             "total_experience": total_exp,

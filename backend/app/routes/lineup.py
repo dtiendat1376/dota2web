@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -15,7 +15,7 @@ class LineupRequest(BaseModel):
 
 class SimilarRequest(BaseModel):
     player_ids: List[int]
-    limit: Optional[int] = 10
+    limit: int = 10
 
 
 @router.post("/analyze")

@@ -40,6 +40,9 @@ def run_pipeline():
     print("\nRunning load_db.py...")
     subprocess.run(["python", os.path.join(scripts_dir, "load_db.py")], check=True)
 
+    print("\nRunning add_indexes.py...")
+    subprocess.run(["python", "-m", "backend.scripts.add_indexes"], check=True)
+
     print("\nPipeline completed successfully.")
     
 if __name__ == "__main__":
