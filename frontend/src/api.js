@@ -28,6 +28,8 @@ export const getHeroes = (params) => api.get('/api/heroes/', { params }).then(r 
 export const getHeroDetail = (id) => api.get(`/api/heroes/${id}`).then(r => r.data);
 export const getHeroMatches = (id, params) => api.get(`/api/heroes/${id}/matches`, { params }).then(r => r.data);
 export const getFetchStatus = () => api.get('/api/fetch/status').then(r => r.data);
+export const getDiscoveryStatus = () => api.get('/api/discovery/status').then(r => r.data);
+export const runDiscovery = () => api.post('/api/discovery/run').then(r => r.data);
 export const getVerificationStatus = () => api.get('/api/verification/status').then(r => r.data);
 export const runVerification = () => api.post('/api/verification/run').then(r => r.data);
 export const globalSearch = (q, limit = 5) => api.get('/api/search/', { params: { q, limit } }).then(r => r.data);

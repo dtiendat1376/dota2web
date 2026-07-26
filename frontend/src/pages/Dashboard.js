@@ -1,23 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getStats, getLeaderboard, getMatches, getFetchStatus, getVerificationStatus } from '../api';
+import { getStats, getLeaderboard, getMatches, getFetchStatus, getDiscoveryStatus, getVerificationStatus } from '../api';
 
 function Dashboard() {
   const [stats, setStats] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [recentMatches, setRecentMatches] = useState([]);
   const [fetchStatus, setFetchStatus] = useState(null);
+  const [discovery, setDiscovery] = useState(null);
   const [verification, setVerification] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    Promise.all([getStats(), getLeaderboard(10), getMatches({ limit: 10 }), getFetchStatus(), getVerificationStatus()])
-      .then(([s, lb, m, fs, vs]) => {
+    Promise.all([getStats(), getLeaderboard(10), getMatches({ limit: 10 }), getFetchStatus(), getDiscoveryStatus(), getVerificationStatus()])
+      .then(([s, lb, m, fs, ds, vs]) => {
         setStats(s);
         setLeaderboard(lb);
         setRecentMatches(m.matches);
         setFetchStatus(fs);
+        setDiscovery(ds);
         setVerification(vs);
         setLoading(false);
       })
@@ -87,6 +89,34 @@ function Dashboard() {
               <span>Mapper: {fetchStatus.mapper_calls_today} / {fetchStatus.mapper_quota} calls today</span>
               {fetchStatus.last_fetch_at && <span>Last update: {new Date(fetchStatus.last_fetch_at).toLocaleString()}</span>}
             </div>
+          </div>
+        </div>
+      )}
+
+      {discovery && (
+        <div className="section section-gap">
+          <h2>OpenDota Discovery</h2>
+          <div className="stats-grid">
+            <div className="stat-card">
+              <h3>{discovery.pro_players_in_db?.toLocaleString()}</h3>
+              <p>Pro Players</p>
+            </div>
+            <div className="stat-card">
+              <h3>{discovery.teams_in_db?.toLocaleString()}</h3>
+              <p>Teams Indexed</p>
+            </div>
+            <div className="stat-card">
+              <h3>{discovery.team_matches_in_db?.toLocaleString()}</h3>
+              <p>Team Matches</p>
+            </div>
+            <div className="stat-card">
+              <h3>{discovery.mapped_players?.toLocaleString()}</h3>
+              <p>Players Mapped</p>
+            </div>
+          </div>
+          <div className="fetcher-meta" style={{ marginTop: '0.5rem' }}>
+            <span>dota_game_id coverage: {discovery.dota_game_ids?.toLocaleString()} / {discovery.total_matches?.toLocaleString()}</span>
+            {discovery.last_run && <span>Last discovery: {new Date(discovery.last_run).toLocaleString()}</span>}
           </div>
         </div>
       )}

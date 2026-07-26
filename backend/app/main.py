@@ -60,3 +60,20 @@ def overview_stats(db: Session = Depends(get_db)):
 def fetch_status():
     from backend.scripts.fetch_opendota import get_status
     return get_status()
+
+
+@app.get("/api/discovery/status")
+def discovery_status():
+    from backend.scripts.bulk_discovery import get_status
+    return get_status()
+
+
+@app.post("/api/discovery/run")
+def run_discovery_endpoint():
+    import threading
+    from backend.scripts.bulk_discovery import run_discovery
+    def _run():
+        run_discovery()
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return {"message": "Discovery started in background"}

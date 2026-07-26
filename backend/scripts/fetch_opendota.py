@@ -307,9 +307,25 @@ def _store_match(data):
     conn.close()
 
 
+def _run_initial_discovery():
+    try:
+        from backend.scripts.bulk_discovery import run_discovery, get_status
+        disc_status = get_status()
+        if disc_status.get("pro_players_in_db", 0) == 0:
+            logger.info("No discovery data found. Running initial bulk discovery...")
+            run_discovery(phases=[1])
+        else:
+            logger.info(f"Discovery data exists: {disc_status.get('pro_players_in_db', 0)} pro players, "
+                        f"{disc_status.get('teams_in_db', 0)} teams.")
+    except Exception as e:
+        logger.error(f"Initial discovery failed: {e}")
+
+
 def fetch_loop(stop_event=None):
     if stop_event is None:
         stop_event = Event()
+
+    _run_initial_discovery()
 
     state = _get_progress()
     quota = _get_quota()

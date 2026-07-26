@@ -170,3 +170,98 @@ class VerificationResult(Base):
         Index("idx_vr_check_type", "check_type"),
         Index("idx_vr_entity", "entity_id"),
     )
+
+
+class ProMatchIndex(Base):
+    __tablename__ = "pro_match_index"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    match_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    duration = Column(Integer, nullable=True)
+    start_time = Column(Integer, nullable=True)
+    radiant_team_id = Column(Integer, nullable=True)
+    radiant_name = Column(String(200), nullable=True)
+    dire_team_id = Column(Integer, nullable=True)
+    dire_name = Column(String(200), nullable=True)
+    leagueid = Column(Integer, nullable=True)
+    league_name = Column(String(300), nullable=True)
+    series_id = Column(Integer, nullable=True)
+    series_type = Column(Integer, nullable=True)
+    radiant_score = Column(Integer, nullable=True)
+    dire_score = Column(Integer, nullable=True)
+    radiant_win = Column(Boolean, nullable=True)
+    version = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, nullable=False)
+
+
+class ProPlayerIndex(Base):
+    __tablename__ = "pro_player_index"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, unique=True, nullable=False, index=True)
+    name = Column(String(200), nullable=True)
+    country_code = Column(String(5), nullable=True)
+    fantasy_role = Column(Integer, nullable=True)
+    team_id = Column(Integer, nullable=True)
+    team_name = Column(String(200), nullable=True)
+    team_tag = Column(String(50), nullable=True)
+    is_locked = Column(Boolean, nullable=True)
+    is_pro = Column(Boolean, nullable=True)
+    total_earnings = Column(Integer, nullable=True)
+    last_match_time = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, nullable=False)
+
+
+class TeamOpenData(Base):
+    __tablename__ = "team_open_data"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Integer, unique=True, nullable=False, index=True)
+    name = Column(String(200), nullable=True)
+    tag = Column(String(50), nullable=True)
+    rating = Column(Float, nullable=True)
+    wins = Column(Integer, nullable=True)
+    losses = Column(Integer, nullable=True)
+    last_match_time = Column(Integer, nullable=True)
+    logo_url = Column(String(500), nullable=True)
+    fetched_at = Column(DateTime, nullable=False)
+
+
+class TeamOpenMatch(Base):
+    __tablename__ = "team_open_matches"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Integer, nullable=False, index=True)
+    match_id = Column(BigInteger, nullable=False)
+    duration = Column(Integer, nullable=True)
+    start_time = Column(Integer, nullable=True)
+    leagueid = Column(Integer, nullable=True)
+    league_name = Column(String(300), nullable=True)
+    series_id = Column(Integer, nullable=True)
+    series_type = Column(Integer, nullable=True)
+    radiant = Column(Boolean, nullable=True)
+    radiant_win = Column(Boolean, nullable=True)
+    player_count = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("idx_team_open_match", "team_id", "match_id", unique=True),
+    )
+
+
+class TeamOpenPlayer(Base):
+    __tablename__ = "team_open_players"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Integer, nullable=False, index=True)
+    account_id = Column(Integer, nullable=False)
+    name = Column(String(200), nullable=True)
+    country_code = Column(String(5), nullable=True)
+    fantasy_role = Column(Integer, nullable=True)
+    is_pro = Column(Boolean, nullable=True)
+    total_earnings = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("idx_team_open_player", "team_id", "account_id", unique=True),
+    )

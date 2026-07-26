@@ -209,3 +209,40 @@
 2026-07-22T08:54:12.006839+00:00 map player=YuN error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
 2026-07-22T09:14:21.856734+00:00 map player=Sko4 error=('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
 2026-07-22T09:33:58.046406+00:00 map player=Just Do It error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:22:59.944256+00:00 game_id=4347472943 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:23:25.512743+00:00 game_id=4347566397 error=522 Server Error: <none> for url: https://api.opendota.com/api/matches/4347566397
+2026-07-24T08:23:50.086020+00:00 game_id=4349463137 error=522 Server Error: <none> for url: https://api.opendota.com/api/matches/4349463137
+2026-07-24T08:24:14.680746+00:00 game_id=4349524207 error=522 Server Error: <none> for url: https://api.opendota.com/api/matches/4349524207
+2026-07-24T08:24:39.238877+00:00 game_id=4349619973 error=522 Server Error: <none> for url: https://api.opendota.com/api/matches/4349619973
+2026-07-24T08:25:03.936804+00:00 game_id=4349717315 error=522 Server Error: <none> for url: https://api.opendota.com/api/matches/4349717315
+2026-07-24T08:25:28.405203+00:00 game_id=4349774156 error=522 Server Error: <none> for url: https://api.opendota.com/api/matches/4349774156
+2026-07-24T08:25:44.920281+00:00 game_id=4349909776 error=521 Server Error: <none> for url: https://api.opendota.com/api/matches/4349909776
+2026-07-24T08:26:58.209330+00:00 map player=tlepovn error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:27:34.193091+00:00 map player=tlepovn error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:28:10.192842+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:28:46.188464+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:29:22.042446+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:29:57.979680+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:30:34.101580+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:31:10.089301+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:31:46.216423+00:00 map player=Sompi485 error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:32:22.393873+00:00 map player=worstsup error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:32:58.397261+00:00 map player=worstsup error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:36:02.904485+00:00 map player=ssyy error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:42:50.302324+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:45:06.785021+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:45:42.894059+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:46:18.952837+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:46:55.159538+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:47:31.340912+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:48:07.458391+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:48:43.634250+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:49:19.795803+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:49:55.905904+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:50:32.255700+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:51:08.423471+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:51:44.525067+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:52:20.644245+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:52:56.834827+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:53:32.899424+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-07-24T08:54:09.035915+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
