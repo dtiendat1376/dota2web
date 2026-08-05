@@ -33,6 +33,7 @@ def apply_aliases(name, alias_map):
 def load_players(session):
     df = pd.read_csv(os.path.join(DATA_DIR, "players.csv"))
     df = df.dropna(subset=["player_id", "player_name"])
+    df = df.drop_duplicates(subset=["player_id"])
     df["player_id"] = df["player_id"].astype(int)
     records = [Player(player_id=r["player_id"], player_name=r["player_name"]) for _, r in df.iterrows()]
     session.bulk_save_objects(records)
@@ -53,9 +54,33 @@ def load_teams(session, alias_map):
     print(f"Loaded {len(records)} unique teams (merged {len(df['team_name'].unique())} -> {len(records)} via aliases)")
 
 
+def tournament_name_map():
+    """Map tournament_id -> tournament_en by scanning the matches CSVs,
+    which carry the name inline even when tournaments.csv lags behind."""
+    names = {}
+    for filename in ["all_tiers_games.csv", "tier1_games.csv", "tier2_games.csv", "tier3_games.csv"]:
+        path = os.path.join(DATA_DIR, filename)
+        if not os.path.exists(path):
+            continue
+        df = pd.read_csv(path, usecols=["tournament_id", "tournament_en"])
+        df = df.dropna(subset=["tournament_id", "tournament_en"])
+        for _, r in df.iterrows():
+            names.setdefault(r["tournament_id"], r["tournament_en"])
+    return names
+
+
 def load_tournaments(session):
     df = pd.read_csv(os.path.join(DATA_DIR, "tournaments.csv"))
-    records = [Tournament(tournament_id=r["tournament_id"], tournament_name=r["tournament_en"]) for _, r in df.iterrows()]
+    df = df.drop_duplicates(subset=["tournament_id"]).dropna(subset=["tournament_id"])
+
+    csv_names = dict(zip(df["tournament_id"], df["tournament_en"]))
+    csv_names.update(tournament_name_map())
+
+    records = [
+        Tournament(tournament_id=tid, tournament_name=name)
+        for tid, name in csv_names.items()
+        if pd.notna(name) and str(name).strip()
+    ]
     session.bulk_save_objects(records)
     session.commit()
     print(f"Loaded {len(records)} tournaments")

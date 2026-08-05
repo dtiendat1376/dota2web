@@ -1,11 +1,11 @@
 {
   "pro_matches_fetched": 100,
-  "pro_players_fetched": 5038,
+  "pro_players_fetched": 5092,
   "teams_fetched": 1000,
   "team_matches_fetched": 25020,
   "team_players_fetched": 1044,
   "dota_game_ids_discovered": 0,
-  "player_ids_mapped": 0,
+  "player_ids_mapped": 6315,
   "teams_enriched": 38,
-  "last_run": "2026-07-23T08:59:53.378928+00:00"
+  "last_run": "2026-08-04T01:36:54.234377+00:00"
 }

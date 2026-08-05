@@ -32,6 +32,7 @@ class Match(Base):
     game_id = Column(BigInteger, nullable=True)
     dota_game_id = Column(BigInteger, nullable=True)
     has_game_data = Column(Boolean, default=False)
+    fetch_status = Column(String(20), nullable=False, server_default="pending", default="pending")
 
     team1 = Column(String(200), ForeignKey("teams.team_name"), nullable=False)
     team2 = Column(String(200), ForeignKey("teams.team_name"), nullable=False)

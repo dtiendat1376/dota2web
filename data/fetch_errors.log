@@ -246,3 +246,8 @@
 2026-07-24T08:52:56.834827+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
 2026-07-24T08:53:32.899424+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
 2026-07-24T08:54:09.035915+00:00 map player=No[o]ne error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-08-04T02:20:16.610994+00:00 map player=DarkMago error=('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+2026-08-05T02:02:01.240242+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-08-05T02:04:26.576930+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-08-05T02:12:36.477316+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-08-05T02:13:12.778028+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)

@@ -1,5 +1,5 @@
 """
-Add performance indexes and new tables to dota2.db.
+Add performance indexes, new tables, and additive schema migrations to dota2.db.
 
 Run: python -m backend.scripts.add_indexes
 """
@@ -45,6 +45,8 @@ INDEXES = [
     ("idx_md_game_id", "match_details", "dota_game_id"),
     ("idx_mps_game_id", "match_player_stats", "dota_game_id"),
     ("idx_mps_hero", "match_player_stats", "hero_id"),
+    # Fetch status index (pending/fetched/not_found/failed)
+    ("idx_m_fetch_status", "matches", "fetch_status"),
     # Player ID map indexes
     ("idx_pim_steam32", "player_id_map", "steam32_id"),
 ]
@@ -52,9 +54,35 @@ INDEXES = [
 DROP_INDEX = "ix_matches_match_datetime"  # duplicate of idx_matches_datetime
 
 
+def _column_exists(cur, table, column):
+    cur.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in cur.fetchall())
+
+
+def migrate_schema(cur):
+    """Additive, idempotent schema migrations for existing databases."""
+    if not _column_exists(cur, "matches", "fetch_status"):
+        print("Adding matches.fetch_status column...", end=" ")
+        t0 = time.time()
+        cur.execute("ALTER TABLE matches ADD COLUMN fetch_status TEXT NOT NULL DEFAULT 'pending'")
+        cur.execute(
+            "UPDATE matches SET fetch_status = 'fetched' "
+            "WHERE dota_game_id IS NOT NULL "
+            "AND dota_game_id IN (SELECT dota_game_id FROM match_details)"
+        )
+        elapsed = time.time() - t0
+        print(f"done ({elapsed:.2f}s)")
+    else:
+        print("matches.fetch_status column already exists.")
+
+
 def main():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
+    # Run additive migrations first
+    print("Running schema migrations...")
+    migrate_schema(cur)
 
     # Create new tables
     print("Creating new tables...")

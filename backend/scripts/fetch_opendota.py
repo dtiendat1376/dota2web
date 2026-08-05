@@ -4,8 +4,10 @@ OpenDota match detail fetcher + player ID mapper (interleaved).
 Runs as a daemon thread started from FastAPI startup.
 Fetches /api/matches/{dota_game_id} and maps player names to Steam32 IDs.
 
-Rate limits: 2,950 calls/day shared 50/50 between fetcher and mapper.
+Rate limits: 2,950 calls/day shared 80/20 between fetcher and mapper.
 Progress: tracked in data/opendota_progress.json + data/mapper_progress.json
+
+All HTTP + quota handling is delegated to backend.app.services.opendota_client.
 """
 
 import json
@@ -15,78 +17,25 @@ import logging
 from datetime import datetime, date, timezone
 from threading import Event
 
-try:
-    import fcntl
-    _HAS_FCNTL = True
-except ImportError:
-    _HAS_FCNTL = False
-
-import requests
 import sqlite3
+
+from backend.app.services.opendota_client import (
+    api_get,
+    quota_remaining,
+    get_quota,
+    DAILY_LIMIT,
+    FETCHER_QUOTA,
+    MAPPER_QUOTA,
+)
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "dota2.db")
 HEROES_CACHE = os.path.join(DATA_DIR, "heroes.json")
 PROGRESS_FILE = os.path.join(DATA_DIR, "opendota_progress.json")
-QUOTA_FILE = os.path.join(DATA_DIR, "api_quota.json")
 ERROR_LOG = os.path.join(DATA_DIR, "fetch_errors.log")
 
-OPENDOTA_BASE = "https://api.opendota.com/api"
-DAILY_LIMIT = 2950
-FETCHER_QUOTA = DAILY_LIMIT * 4 // 5  # 2360 calls/day for matches (80%)
-MAPPER_QUOTA = DAILY_LIMIT - FETCHER_QUOTA  # 590 calls/day for player mapping (20%)
-SLEEP_BETWEEN = 1.11  # seconds (~54 req/min)
-
 logger = logging.getLogger("fetch_opendota")
-
-
-def _get_quota():
-    if os.path.exists(QUOTA_FILE):
-        with open(QUOTA_FILE, "r") as f:
-            if _HAS_FCNTL:
-                fcntl.flock(f, fcntl.LOCK_SH)
-            try:
-                return json.load(f)
-            finally:
-                if _HAS_FCNTL:
-                    fcntl.flock(f, fcntl.LOCK_UN)
-    return {
-        "date": None,
-        "fetcher_calls": 0,
-        "mapper_calls": 0,
-        "daily_limit": DAILY_LIMIT,
-    }
-
-
-def _save_quota(quota):
-    with open(QUOTA_FILE, "w") as f:
-        if _HAS_FCNTL:
-            fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            json.dump(quota, f, indent=2)
-        finally:
-            if _HAS_FCNTL:
-                fcntl.flock(f, fcntl.LOCK_UN)
-
-
-def _reset_quota_if_new_day(quota):
-    today = date.today().isoformat()
-    if quota.get("date") != today:
-        quota["date"] = today
-        quota["fetcher_calls"] = 0
-        quota["mapper_calls"] = 0
-        _save_quota(quota)
-        logger.info(f"New day ({today}), quota reset.")
-    return quota
-
-
-def _fetcher_quota_remaining(quota):
-    return max(0, FETCHER_QUOTA - quota["fetcher_calls"])
-
-
-def _mapper_quota_remaining(quota):
-    return max(0, MAPPER_QUOTA - quota["mapper_calls"])
 
 
 def _get_unmapped_batch(limit):
@@ -156,14 +105,14 @@ def _store_mapping(player_name, team_name, steam32_id, confidence):
     conn.close()
 
 
-def _run_mapper_batch(session, quota, batch_size):
+def _run_mapper_batch(batch_size):
     players = _get_unmapped_batch(batch_size)
     if not players:
         return
 
     logger.info(f"Mapper: mapping {len(players)} players...")
     for player_id, player_name in players:
-        if _mapper_quota_remaining(quota) <= 0:
+        if quota_remaining("mapper") <= 0:
             break
         teams = _get_player_teams(player_name)
         for team_name in teams:
@@ -174,26 +123,16 @@ def _run_mapper_batch(session, quota, batch_size):
             conn.close()
             if existing and existing[0]:
                 continue
-            try:
-                resp = session.get(f"{OPENDOTA_BASE}/search", params={"q": player_name}, timeout=30)
-                if resp.status_code == 429:
-                    time.sleep(60)
-                    resp = session.get(f"{OPENDOTA_BASE}/search", params={"q": player_name}, timeout=30)
-                quota["mapper_calls"] += 1
-                _save_quota(quota)
-                if resp.status_code != 200:
-                    logger.error(f"Search failed for '{player_name}': HTTP {resp.status_code}")
-                    time.sleep(SLEEP_BETWEEN)
-                    continue
-                results = resp.json()
-                steam32_id, confidence = _disambiguate(results, player_name)
-                _store_mapping(player_name, team_name, steam32_id, confidence)
-                time.sleep(SLEEP_BETWEEN)
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Mapper error for '{player_name}': {e}")
-                with open(ERROR_LOG, "a", encoding="utf-8") as f:
-                    f.write(f"{datetime.now(timezone.utc).isoformat()} map player={player_name} error={e}\n")
-                time.sleep(5)
+            resp = api_get("/search", params={"q": player_name}, bucket="mapper")
+            if resp is None:
+                logger.warning(f"Mapper: no response for '{player_name}'. Stopping batch.")
+                return
+            if resp.status_code != 200:
+                logger.error(f"Search failed for '{player_name}': HTTP {resp.status_code}")
+                continue
+            results = resp.json()
+            steam32_id, confidence = _disambiguate(results, player_name)
+            _store_mapping(player_name, team_name, steam32_id, confidence)
 
 
 def _get_progress():
@@ -223,7 +162,9 @@ def _fetch_heroes():
         with open(HEROES_CACHE, "r") as f:
             return json.load(f)
     try:
-        resp = requests.get(f"{OPENDOTA_BASE}/heroes", timeout=30)
+        resp = api_get("/heroes", bucket="other")
+        if resp is None:
+            return []
         resp.raise_for_status()
         heroes = resp.json()
         with open(HEROES_CACHE, "w") as f:
@@ -252,14 +193,48 @@ def _load_heroes_to_db(heroes):
 def _get_pending_game_ids():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute(
-        "SELECT DISTINCT dota_game_id FROM matches WHERE dota_game_id IS NOT NULL "
-        "AND dota_game_id NOT IN (SELECT dota_game_id FROM match_details) "
-        "ORDER BY dota_game_id"
-    )
+    try:
+        cur.execute(
+            "SELECT DISTINCT dota_game_id FROM matches WHERE dota_game_id IS NOT NULL "
+            "AND fetch_status = 'pending' "
+            "ORDER BY dota_game_id DESC"
+        )
+    except sqlite3.OperationalError:
+        # Fallback for databases that have not been migrated (no fetch_status column)
+        cur.execute(
+            "SELECT DISTINCT dota_game_id FROM matches WHERE dota_game_id IS NOT NULL "
+            "AND dota_game_id NOT IN (SELECT dota_game_id FROM match_details) "
+            "ORDER BY dota_game_id DESC"
+        )
     ids = [row[0] for row in cur.fetchall()]
     conn.close()
     return ids
+
+
+def _mark_fetch_status(game_id, status):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE matches SET fetch_status = ? WHERE dota_game_id = ?",
+            (status, game_id),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.OperationalError:
+        pass
+
+
+def _retry_failed_matches():
+    """Reset yesterday's transient failures to pending (one retry per day)."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("UPDATE matches SET fetch_status = 'pending' WHERE fetch_status = 'failed'")
+        conn.commit()
+        conn.close()
+    except sqlite3.OperationalError:
+        pass
 
 
 def _store_match(data):
@@ -299,10 +274,16 @@ def _store_match(data):
              p.get("level"), p.get("win"))
         )
 
-    cur.execute(
-        "UPDATE matches SET has_game_data = 1 WHERE dota_game_id = ?",
-        (game_id,)
-    )
+    try:
+        cur.execute(
+            "UPDATE matches SET has_game_data = 1, fetch_status = 'fetched' WHERE dota_game_id = ?",
+            (game_id,)
+        )
+    except sqlite3.OperationalError:
+        cur.execute(
+            "UPDATE matches SET has_game_data = 1 WHERE dota_game_id = ?",
+            (game_id,)
+        )
     conn.commit()
     conn.close()
 
@@ -328,16 +309,16 @@ def fetch_loop(stop_event=None):
     _run_initial_discovery()
 
     state = _get_progress()
-    quota = _get_quota()
-    quota = _reset_quota_if_new_day(quota)
+    quota = get_quota()
 
     today = date.today().isoformat()
     if state.get("last_date") != today:
         state["fetched_today"] = 0
         state["last_date"] = today
+        _retry_failed_matches()
 
-    remaining = _fetcher_quota_remaining(quota)
-    mapper_remaining = _mapper_quota_remaining(quota)
+    remaining = quota_remaining("fetcher")
+    mapper_remaining = quota_remaining("mapper")
     if remaining <= 0 and mapper_remaining <= 0:
         logger.info(f"All quota exhausted (fetcher: {quota['fetcher_calls']}/{FETCHER_QUOTA}, mapper: {quota['mapper_calls']}/{MAPPER_QUOTA}). Stopping.")
         state["is_running"] = False
@@ -361,9 +342,6 @@ def fetch_loop(stop_event=None):
     state["started_at"] = state.get("started_at") or datetime.now(timezone.utc).isoformat()
     _save_progress(state)
 
-    session = requests.Session()
-    session.headers.update({"Accept": "application/json"})
-
     BATCH_SIZE = 25
     game_idx = 0
 
@@ -374,8 +352,8 @@ def fetch_loop(stop_event=None):
             _save_progress(state)
             return
 
-        remaining = _fetcher_quota_remaining(quota)
-        mapper_remaining = _mapper_quota_remaining(quota)
+        remaining = quota_remaining("fetcher")
+        mapper_remaining = quota_remaining("mapper")
         if remaining <= 0 and mapper_remaining <= 0:
             logger.info(f"All quota exhausted. Stopping.")
             state["is_running"] = False
@@ -389,59 +367,60 @@ def fetch_loop(stop_event=None):
                     state["is_running"] = False
                     _save_progress(state)
                     return
-                if _fetcher_quota_remaining(quota) <= 0:
+                if quota_remaining("fetcher") <= 0:
                     break
                 game_id = pending[i]
-                try:
-                    resp = session.get(f"{OPENDOTA_BASE}/matches/{game_id}", timeout=30)
-                    if resp.status_code == 429:
-                        logger.warning("Rate limited. Sleeping 60s.")
-                        time.sleep(60)
-                        resp = session.get(f"{OPENDOTA_BASE}/matches/{game_id}", timeout=30)
-                    quota["fetcher_calls"] += 1
-                    _save_quota(quota)
-                    if resp.status_code == 404:
-                        state["not_found"] += 1
-                        state["last_game_id"] = game_id
-                        state["fetched_today"] += 1
-                        state["fetched_total"] += 1
-                        state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                        _save_progress(state)
-                        time.sleep(SLEEP_BETWEEN)
-                        continue
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if not data.get("players"):
-                        state["not_found"] += 1
-                        state["last_game_id"] = game_id
-                        state["fetched_today"] += 1
-                        state["fetched_total"] += 1
-                        state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                        _save_progress(state)
-                        time.sleep(SLEEP_BETWEEN)
-                        continue
-                    _store_match(data)
-                    state["fetched_today"] += 1
-                    state["fetched_total"] += 1
-                    state["last_game_id"] = game_id
-                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                    _save_progress(state)
-                    if state["fetched_today"] % 100 == 0:
-                        logger.info(f"Fetch progress: {state['fetched_today']} fetched, {quota['fetcher_calls']}/{FETCHER_QUOTA} quota")
-                    time.sleep(SLEEP_BETWEEN)
-                except requests.exceptions.RequestException as e:
+                resp = api_get(f"/matches/{game_id}", bucket="fetcher")
+                if resp is None:
+                    _mark_fetch_status(game_id, "failed")
                     state["failed"] += 1
                     state["last_game_id"] = game_id
                     state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
                     _save_progress(state)
                     with open(ERROR_LOG, "a", encoding="utf-8") as f:
-                        f.write(f"{datetime.now(timezone.utc).isoformat()} game_id={game_id} error={e}\n")
-                    logger.error(f"Error fetching {game_id}: {e}")
+                        f.write(f"{datetime.now(timezone.utc).isoformat()} game_id={game_id} error=fetch failed\n")
                     time.sleep(5)
+                    continue
+                if resp.status_code == 404:
+                    _mark_fetch_status(game_id, "not_found")
+                    state["not_found"] += 1
+                    state["last_game_id"] = game_id
+                    state["fetched_today"] += 1
+                    state["fetched_total"] += 1
+                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+                    _save_progress(state)
+                    continue
+                try:
+                    data = resp.json()
+                except ValueError:
+                    _mark_fetch_status(game_id, "failed")
+                    state["failed"] += 1
+                    state["last_game_id"] = game_id
+                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+                    _save_progress(state)
+                    continue
+                if not data.get("players"):
+                    _mark_fetch_status(game_id, "not_found")
+                    state["not_found"] += 1
+                    state["last_game_id"] = game_id
+                    state["fetched_today"] += 1
+                    state["fetched_total"] += 1
+                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+                    _save_progress(state)
+                    continue
+                _store_match(data)
+                state["fetched_today"] += 1
+                state["fetched_total"] += 1
+                state["last_game_id"] = game_id
+                state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+                _save_progress(state)
+                if state["fetched_today"] % 100 == 0:
+                    fetcher_used = FETCHER_QUOTA - quota_remaining("fetcher")
+                    logger.info(f"Fetch progress: {state['fetched_today']} fetched, {fetcher_used}/{FETCHER_QUOTA} quota")
             game_idx = batch_end
 
-        if _mapper_quota_remaining(quota) > 0:
-            _run_mapper_batch(session, quota, BATCH_SIZE)
+        if quota_remaining("mapper") > 0:
+            _run_mapper_batch(BATCH_SIZE)
 
     state["is_running"] = False
     state["started_at"] = None
@@ -451,20 +430,29 @@ def fetch_loop(stop_event=None):
 
 def get_status():
     state = _get_progress()
-    quota = _get_quota()
-    quota = _reset_quota_if_new_day(quota)
+    quota = get_quota()
     pending_count = 0
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*) FROM matches WHERE dota_game_id IS NOT NULL "
-            "AND dota_game_id NOT IN (SELECT dota_game_id FROM match_details)"
+            "AND fetch_status = 'pending'"
         )
         pending_count = cur.fetchone()[0]
         conn.close()
     except Exception:
-        pass
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM matches WHERE dota_game_id IS NOT NULL "
+                "AND dota_game_id NOT IN (SELECT dota_game_id FROM match_details)"
+            )
+            pending_count = cur.fetchone()[0]
+            conn.close()
+        except Exception:
+            pass
 
     return {
         "fetched_today": state.get("fetched_today", 0),
@@ -472,6 +460,7 @@ def get_status():
         "mapper_quota": MAPPER_QUOTA,
         "fetcher_calls_today": quota["fetcher_calls"],
         "mapper_calls_today": quota["mapper_calls"],
+        "other_calls_today": quota.get("other_calls", 0),
         "daily_limit": DAILY_LIMIT,
         "fetched_total": state.get("fetched_total", 0),
         "failed": state.get("failed", 0),

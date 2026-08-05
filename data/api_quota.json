@@ -1,6 +1,7 @@
 {
-  "date": "2026-07-24",
-  "fetcher_calls": 24,
-  "mapper_calls": 267,
-  "daily_limit": 2950
+  "date": "2026-08-05",
+  "fetcher_calls": 146,
+  "mapper_calls": 262,
+  "daily_limit": 2950,
+  "other_calls": 0
 }

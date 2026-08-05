@@ -1,11 +1,11 @@
 {
-  "fetched_today": 17,
-  "fetched_total": 5358,
+  "fetched_today": 146,
+  "fetched_total": 5591,
   "failed": 24,
-  "not_found": 691,
-  "last_game_id": 4349909776,
-  "last_date": "2026-07-24",
+  "not_found": 723,
+  "last_game_id": 8867258849,
+  "last_date": "2026-08-05",
   "is_running": true,
-  "started_at": "2026-07-15T03:08:31.703324",
-  "last_fetch_at": "2026-07-24T08:25:44.918180+00:00"
+  "started_at": "2026-08-03T09:39:51.726679+00:00",
+  "last_fetch_at": "2026-08-05T02:40:45.875321+00:00"
 }

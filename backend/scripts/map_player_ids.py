@@ -3,6 +3,7 @@ Player ID mapper: maps internal player names to Steam32 account IDs.
 
 Uses OpenDota /api/search?q={name} to find Steam32 IDs.
 Disambiguates using team context from our database.
+All HTTP + quota handling is delegated to backend.app.services.opendota_client.
 
 Priority tiers:
   T1: Players from top 20 teams (highest value)
@@ -15,56 +16,24 @@ Run: python -m backend.scripts.map_player_ids
 
 import json
 import os
-import time
 import logging
 import sqlite3
 from datetime import datetime, timezone
 
-try:
-    import fcntl
-    _HAS_FCNTL = True
-except ImportError:
-    _HAS_FCNTL = False
-
-import requests
+from backend.app.services.opendota_client import (
+    api_get,
+    quota_remaining,
+    get_quota,
+    MAPPER_QUOTA,
+)
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "dota2.db")
-QUOTA_FILE = os.path.join(DATA_DIR, "api_quota.json")
 MAPPER_PROGRESS = os.path.join(DATA_DIR, "mapper_progress.json")
 ERROR_LOG = os.path.join(DATA_DIR, "fetch_errors.log")
 
-OPENDOTA_BASE = "https://api.opendota.com/api"
-SLEEP_BETWEEN = 1.11
-DAILY_LIMIT = 2950
-MAPPER_QUOTA = DAILY_LIMIT * 1 // 5  # 590 calls/day (20%)
-
 logger = logging.getLogger("map_player_ids")
-
-
-def _get_quota():
-    if os.path.exists(QUOTA_FILE):
-        with open(QUOTA_FILE, "r") as f:
-            if _HAS_FCNTL:
-                fcntl.flock(f, fcntl.LOCK_SH)
-            try:
-                return json.load(f)
-            finally:
-                if _HAS_FCNTL:
-                    fcntl.flock(f, fcntl.LOCK_UN)
-    return {"date": None, "fetcher_calls": 0, "mapper_calls": 0, "daily_limit": 2950}
-
-
-def _save_quota(quota):
-    with open(QUOTA_FILE, "w") as f:
-        if _HAS_FCNTL:
-            fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            json.dump(quota, f, indent=2)
-        finally:
-            if _HAS_FCNTL:
-                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _get_progress():
@@ -219,19 +188,22 @@ def _get_player_teams(player_name):
     return teams
 
 
-def search_player(session, player_name):
-    try:
-        resp = session.get(f"{OPENDOTA_BASE}/search", params={"q": player_name}, timeout=30)
-        if resp.status_code == 429:
-            logger.warning("Rate limited. Sleeping 60s.")
-            time.sleep(60)
-            resp = session.get(f"{OPENDOTA_BASE}/search", params={"q": player_name}, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Search failed for '{player_name}': {e}")
+def search_player(player_name):
+    resp = api_get("/search", params={"q": player_name}, bucket="mapper")
+    if resp is None:
+        logger.error(f"No response for '{player_name}'.")
         with open(ERROR_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now(timezone.utc).isoformat()} search player={player_name} error={e}\n")
+            f.write(f"{datetime.now(timezone.utc).isoformat()} search player={player_name} error=no response\n")
+        return None
+    if resp.status_code != 200:
+        logger.error(f"Search failed for '{player_name}': HTTP {resp.status_code}")
+        with open(ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now(timezone.utc).isoformat()} search player={player_name} error=HTTP {resp.status_code}\n")
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        logger.error(f"Invalid JSON for '{player_name}'.")
         return None
 
 
@@ -261,7 +233,7 @@ def store_mapping(player_name, team_name, steam32_id, confidence):
 
 def get_mapper_status():
     state = _get_progress()
-    quota = _get_quota()
+    quota = get_quota()
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
@@ -287,7 +259,7 @@ def get_mapper_status():
     }
 
 
-def map_batch(players, quota, max_calls=None):
+def map_batch(players, max_calls=None):
     state = _get_progress()
     today = datetime.now(timezone.utc).date().isoformat()
     if state.get("last_date") != today:
@@ -298,13 +270,14 @@ def map_batch(players, quota, max_calls=None):
     state["started_at"] = state.get("started_at") or datetime.now(timezone.utc).isoformat()
     _save_progress(state)
 
-    session = requests.Session()
-    session.headers.update({"Accept": "application/json"})
     calls_made = 0
 
     for player_id, player_name in players:
         if max_calls and calls_made >= max_calls:
             logger.info(f"Mapper batch limit reached ({calls_made}/{max_calls}). Stopping.")
+            break
+        if quota_remaining("mapper") <= 0:
+            logger.info("Mapper quota exhausted. Stopping.")
             break
 
         db_teams = _get_player_teams(player_name)
@@ -321,17 +294,14 @@ def map_batch(players, quota, max_calls=None):
                 state["skipped"] += 1
                 continue
 
-            results = search_player(session, player_name)
+            results = search_player(player_name)
             calls_made += 1
-            quota["mapper_calls"] += 1
-            _save_quota(quota)
 
             if results is None:
                 state["failed"] += 1
                 state["last_player"] = player_name
                 state["last_search_at"] = datetime.now(timezone.utc).isoformat()
                 _save_progress(state)
-                time.sleep(SLEEP_BETWEEN)
                 continue
 
             steam32_id, confidence = disambiguate(results, player_name)
@@ -344,9 +314,8 @@ def map_batch(players, quota, max_calls=None):
             _save_progress(state)
 
             if state["mapped_today"] % 50 == 0:
-                logger.info(f"Mapper progress: {state['mapped_today']} mapped, {quota['mapper_calls']}/{MAPPER_QUOTA} quota used")
-
-            time.sleep(SLEEP_BETWEEN)
+                remaining = quota_remaining("mapper")
+                logger.info(f"Mapper progress: {state['mapped_today']} mapped, {MAPPER_QUOTA - remaining}/{MAPPER_QUOTA} quota used")
 
     state["is_running"] = False
     state["started_at"] = None
@@ -358,17 +327,10 @@ def map_batch(players, quota, max_calls=None):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-    quota = _get_quota()
-    today = datetime.now(timezone.utc).date().isoformat()
-    if quota.get("date") != today:
-        quota["date"] = today
-        quota["fetcher_calls"] = 0
-        quota["mapper_calls"] = 0
-        _save_quota(quota)
-
-    remaining = max(0, MAPPER_QUOTA - quota["mapper_calls"])
+    quota = get_quota()
+    remaining = quota_remaining("mapper")
     if remaining <= 0:
-        print(f"Mapper quota exhausted ({quota['mapper_calls']}/{MAPPER_QUOTA}). Try again tomorrow.")
+        print(f"Mapper quota exhausted ({quota.get('mapper_calls', 0)}/{MAPPER_QUOTA}). Try again tomorrow.")
         exit(0)
 
     print(f"Mapper quota remaining: {remaining}/{MAPPER_QUOTA}")
@@ -380,23 +342,24 @@ if __name__ == "__main__":
     t1_players = list(set(t1_players))
     print(f"  Found {len(t1_players)} unique players from top 20 teams")
 
-    calls = map_batch(t1_players, quota, max_calls=remaining)
+    calls = map_batch(t1_players, max_calls=remaining)
     print(f"T1 complete. Used {calls} API calls.")
 
-    remaining = max(0, MAPPER_QUOTA - quota["mapper_calls"])
+    remaining = quota_remaining("mapper")
     if remaining > 0:
         print(f"\nPriority T2: Top 50 most-appearance players...")
         t2_players = _get_top_players(50)
-        calls = map_batch(t2_players, quota, max_calls=remaining)
+        calls = map_batch(t2_players, max_calls=remaining)
         print(f"T2 complete. Used {calls} API calls.")
 
-    remaining = max(0, MAPPER_QUOTA - quota["mapper_calls"])
+    remaining = quota_remaining("mapper")
     if remaining > 0:
         print(f"\nPriority T3: Recent players (2024+)...")
         t3_players = _get_recent_players(2024)
         print(f"  Found {len(t3_players)} recent players")
-        calls = map_batch(t3_players, quota, max_calls=remaining)
+        calls = map_batch(t3_players, max_calls=remaining)
         print(f"T3 complete. Used {calls} API calls.")
 
     print(f"\nTotal mapped today: {_get_progress()['mapped_today']}")
-    print(f"Quota used: {quota['mapper_calls']}/{MAPPER_QUOTA}")
+    quota = get_quota()
+    print(f"Quota used: {quota.get('mapper_calls', 0)}/{MAPPER_QUOTA}")

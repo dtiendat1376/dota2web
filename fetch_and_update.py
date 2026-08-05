@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import kagglehub
 from kagglehub import KaggleDatasetAdapter
 
@@ -32,13 +33,13 @@ def run_pipeline():
     scripts_dir = os.path.join(BASE_DIR, "backend", "scripts")
 
     print("\nRunning data_cleaner.py...")
-    subprocess.run(["python", os.path.join(scripts_dir, "data_cleaner.py")], check=True)
+    subprocess.run([sys.executable, os.path.join(scripts_dir, "data_cleaner.py")], check=True)
 
     print("\nRunning detect_rebrands.py...")
-    subprocess.run(["python", os.path.join(scripts_dir, "detect_rebrands.py")], check=True)
+    subprocess.run([sys.executable, os.path.join(scripts_dir, "detect_rebrands.py")], check=True)
 
     print("\nRunning load_db.py...")
-    subprocess.run(["python", os.path.join(scripts_dir, "load_db.py")], check=True)
+    subprocess.run([sys.executable, os.path.join(scripts_dir, "load_db.py")], check=True)
 
     print("\nRunning add_indexes.py...")
     subprocess.run(["python", "-m", "backend.scripts.add_indexes"], check=True)
