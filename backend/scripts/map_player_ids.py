@@ -26,6 +26,7 @@ from backend.app.services.opendota_client import (
     get_quota,
     MAPPER_QUOTA,
 )
+from backend.app.services.pro_player_mapper import try_local_mapping
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -273,16 +274,29 @@ def map_batch(players, max_calls=None):
     calls_made = 0
 
     for player_id, player_name in players:
+        db_teams = _get_player_teams(player_name)
+        if not db_teams:
+            db_teams = {"Unknown"}
+
+        conn = sqlite3.connect(DB_PATH)
+        local_id = try_local_mapping(conn, player_name, db_teams)
+        conn.commit()
+        conn.close()
+        if local_id is not None:
+            state["mapped_today"] += 1
+            state["mapped_total"] += 1
+            state["last_player"] = player_name
+            state["last_search_at"] = datetime.now(timezone.utc).isoformat()
+            _save_progress(state)
+            logger.info(f"Mapped '{player_name}' locally (pro_player_index, {local_id})")
+            continue
+
         if max_calls and calls_made >= max_calls:
             logger.info(f"Mapper batch limit reached ({calls_made}/{max_calls}). Stopping.")
             break
         if quota_remaining("mapper") <= 0:
             logger.info("Mapper quota exhausted. Stopping.")
             break
-
-        db_teams = _get_player_teams(player_name)
-        if not db_teams:
-            db_teams = {"Unknown"}
 
         for team_name in db_teams:
             conn = sqlite3.connect(DB_PATH)

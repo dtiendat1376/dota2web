@@ -27,6 +27,10 @@ from backend.app.services.opendota_client import (
     FETCHER_QUOTA,
     MAPPER_QUOTA,
 )
+from backend.app.services.pro_player_mapper import (
+    try_local_mapping,
+    mine_match_payload,
+)
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -112,9 +116,16 @@ def _run_mapper_batch(batch_size):
 
     logger.info(f"Mapper: mapping {len(players)} players...")
     for player_id, player_name in players:
+        teams = _get_player_teams(player_name)
+        conn = sqlite3.connect(DB_PATH)
+        local_id = try_local_mapping(conn, player_name, teams)
+        conn.commit()
+        conn.close()
+        if local_id is not None:
+            logger.info(f"Mapper: mapped '{player_name}' locally (pro_player_index, {local_id})")
+            continue
         if quota_remaining("mapper") <= 0:
             break
-        teams = _get_player_teams(player_name)
         for team_name in teams:
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
@@ -284,6 +295,13 @@ def _store_match(data):
             "UPDATE matches SET has_game_data = 1 WHERE dota_game_id = ?",
             (game_id,)
         )
+
+    team_row = cur.execute(
+        "SELECT team1, team2 FROM matches WHERE dota_game_id = ?", (game_id,)
+    ).fetchone()
+    if team_row:
+        mine_match_payload(cur, team_row[0], team_row[1], data.get("players", []))
+
     conn.commit()
     conn.close()
 
