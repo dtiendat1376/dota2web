@@ -6,6 +6,7 @@ from backend.app.database import get_db
 from backend.app.models.models import Team, Match
 from backend.app.services.team_features import get_team_features
 from backend.app.services.team_hero_features import get_team_hero_pool
+from backend.app.utils import match_winner
 
 router = APIRouter()
 
@@ -93,6 +94,8 @@ def team_leaderboard(limit: int = Query(20, ge=1, le=100), db: Session = Depends
                     if name not in recent_by_team:
                         recent_by_team[name] = []
                     if len(recent_by_team[name]) < 10:
+                        if match_winner(m) is None:
+                            continue
                         won = (m.team1 == name and m.team1_win) or (m.team2 == name and not m.team1_win)
                         recent_by_team[name].append(won)
 

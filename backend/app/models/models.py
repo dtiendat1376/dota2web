@@ -122,6 +122,9 @@ class Hero(Base):
     primary_attr = Column(String(10), nullable=True)
     attack_type = Column(String(20), nullable=True)
     roles = Column(String(200), nullable=True)
+    pro_pick = Column(Integer, nullable=True)
+    pro_win = Column(Integer, nullable=True)
+    pro_ban = Column(Integer, nullable=True)
 
 
 class Prediction(Base):

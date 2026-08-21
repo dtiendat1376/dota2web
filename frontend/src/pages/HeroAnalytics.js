@@ -12,6 +12,8 @@ const ATTRS = [
 const SORT_OPTIONS = [
   { value: 'pick_count', label: 'Most Picked' },
   { value: 'win_rate', label: 'Win Rate' },
+  { value: 'pro_pick', label: 'Pro Picks' },
+  { value: 'pro_win_rate', label: 'Pro Win Rate' },
   { value: 'avg_kills', label: 'Avg Kills' },
   { value: 'avg_gpm', label: 'Avg GPM' },
 ];
@@ -82,11 +84,26 @@ export default function HeroAnalytics() {
                 </div>
               </div>
 
-              <div className="cs-grid section-gap">
+              <div className="cs-grid">
                 <div className="cs-item">
-                  <span className="cs-value">{heroDetail.avg_deaths || '—'}</span>
-                  <span className="cs-label">Avg Deaths</span>
+                  <span className="cs-value">{heroDetail.pro_pick || '—'}</span>
+                  <span className="cs-label">Pro Picks</span>
                 </div>
+                <div className="cs-item">
+                  <span className="cs-value">{heroDetail.pro_ban || '—'}</span>
+                  <span className="cs-label">Pro Bans</span>
+                </div>
+                <div className="cs-item">
+                  <span className={`cs-value ${heroDetail.pro_win_rate >= 0.52 ? 'good' : heroDetail.pro_win_rate < 0.48 ? 'warn' : ''}`}>
+                    {heroDetail.pro_pick > 0 ? `${(heroDetail.pro_win_rate * 100).toFixed(1)}%` : '—'}
+                  </span>
+                  <span className="cs-label">Pro Win Rate</span>
+                </div>
+                <div className="cs-item">
+                  <span className="cs-value">{heroDetail.avg_kills || '—'}</span>
+                  <span className="cs-label">Avg Kills</span>
+                </div>
+              </div>
                 <div className="cs-item">
                   <span className="cs-value">{heroDetail.avg_assists || '—'}</span>
                   <span className="cs-label">Avg Assists</span>
@@ -132,7 +149,7 @@ export default function HeroAnalytics() {
     <div className="page">
       <h2 className="page-title">Hero Analytics</h2>
       <p className="page-desc">
-        Pick/ban rates, win rates, and performance stats from fetched match data.
+        Pick/ban rates, win rates, and performance stats from fetched match data, plus pro meta from OpenDota heroStats.
       </p>
 
       <div className="controls">
@@ -169,6 +186,8 @@ export default function HeroAnalytics() {
               <th>Attr</th>
               <th>Picks</th>
               <th>Win Rate</th>
+              <th>Pro Picks</th>
+              <th>Pro WR</th>
               <th>Avg K/D/A</th>
               <th>Avg GPM</th>
               <th>Avg LH</th>
@@ -183,6 +202,10 @@ export default function HeroAnalytics() {
                 <td>{h.pick_count}</td>
                 <td className={h.win_rate >= 0.52 ? 'winner' : h.win_rate < 0.48 ? 'loser' : ''}>
                   {(h.win_rate * 100).toFixed(1)}%
+                </td>
+                <td>{h.pro_pick || '—'}</td>
+                <td className={h.pro_win_rate >= 0.52 ? 'winner' : h.pro_win_rate < 0.48 ? 'loser' : ''}>
+                  {h.pro_pick > 0 ? `${(h.pro_win_rate * 100).toFixed(1)}%` : '—'}
                 </td>
                 <td>{h.avg_kills}/{h.avg_deaths}/{h.avg_assists}</td>
                 <td>{h.avg_gpm}</td>

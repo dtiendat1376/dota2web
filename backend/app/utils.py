@@ -1,6 +1,17 @@
 from backend.app.constants import PLAYER_COLS_T1, PLAYER_COLS_T2, POS_NAMES
 
 
+def match_winner(match):
+    """Return the winning team name, or None if the series is a draw.
+
+    The dataset sets team1_win arbitrarily for drawn series (e.g. BO2 1-1),
+    so the winner is derived from the final scores instead.
+    """
+    if match.score1 == match.score2:
+        return None
+    return match.team1 if match.score1 > match.score2 else match.team2
+
+
 def dedup_matches(matches):
     """Deduplicate match rows by match_id, keeping the first occurrence.
 

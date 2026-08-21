@@ -6,6 +6,7 @@ import json
 
 from backend.app.database import get_db
 from backend.app.models.models import Match, Team, Tournament, MatchDetail, MatchPlayerStat, Hero
+from backend.app.utils import match_winner
 
 router = APIRouter()
 
@@ -82,12 +83,15 @@ def team_stats(team_name: str, db: Session = Depends(get_db)):
     if not matches:
         return {"team": name, "total_matches": 0}
 
-    wins = sum(1 for m in matches if (m.team1 == name and m.team1_win) or (m.team2 == name and not m.team1_win))
+    wins = sum(1 for m in matches if (m.team1 == name and m.team1_win) or (m.team2 == name and not m.team1_win) if match_winner(m) is not None)
 
     recent_5 = []
     for m in matches[:5]:
         opponent = m.team2 if m.team1 == name else m.team1
-        won = (m.team1 == name and m.team1_win) or (m.team2 == name and not m.team1_win)
+        if match_winner(m) is None:
+            won = None
+        else:
+            won = (m.team1 == name and m.team1_win) or (m.team2 == name and not m.team1_win)
         recent_5.append({
             "match_id": m.match_id,
             "opponent": opponent,
@@ -96,12 +100,14 @@ def team_stats(team_name: str, db: Session = Depends(get_db)):
             "datetime": m.match_datetime.isoformat() if m.match_datetime else None,
         })
 
+    decisive = sum(1 for m in matches if match_winner(m) is not None)
     return {
         "team": name,
         "total_matches": len(matches),
         "wins": wins,
-        "losses": len(matches) - wins,
-        "win_rate": round(wins / len(matches), 4),
+        "losses": decisive - wins,
+        "draws": len(matches) - decisive,
+        "win_rate": round(wins / decisive, 4) if decisive else 0.0,
         "recent_5": recent_5,
     }
 

@@ -109,7 +109,8 @@ python -m backend.scripts.add_indexes
 
 A background daemon starts automatically with the FastAPI server. It fetches match details (drafts, per-player stats) from the OpenDota API and maps player names to Steam32 IDs.
 
-- **Rate limit:** 2,950 calls/day split 80/20 between fetcher and mapper
+- **Rate limit:** 2,950 calls/day; the fetcher gets the largest slice, the mapper a small cap (local pro-player index covers most names), and live/utility calls a hard cap
+- **Retries:** Failed matches retry up to a bounded number of times, then are retired permanently to avoid wasting quota on dead game IDs
 - **Progress:** Tracked in `data/opendota_progress.json` and `data/api_quota.json`
 - **Verification:** Cross-validates local hero win rates against OpenDota `/heroStats`
 

@@ -13,6 +13,8 @@ from backend.app.routes import matches, teams, players, predictions, tournaments
 
 @asynccontextmanager
 async def lifespan(app):
+    from backend.scripts.verify_hero_stats import ensure_hero_pro_columns
+    ensure_hero_pro_columns()
     from backend.app.services.fetch_status import start_fetcher
     thread = threading.Thread(target=start_fetcher, daemon=True)
     thread.start()

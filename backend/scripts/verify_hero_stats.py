@@ -50,6 +50,48 @@ def _save_cache(data):
         }, f)
 
 
+def ensure_hero_pro_columns(conn=None):
+    """Idempotently add pro_pick/pro_win/pro_ban columns to the heroes table."""
+    close = conn is None
+    if close:
+        conn = sqlite3.connect(DB_PATH)
+    try:
+        for col in ("pro_pick", "pro_win", "pro_ban"):
+            try:
+                conn.execute(f"ALTER TABLE heroes ADD COLUMN {col} INTEGER")
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+    finally:
+        if close:
+            conn.close()
+
+
+def update_hero_pro_stats(hero_stats):
+    """Persist pro pick/win/ban counts from /heroStats into the heroes table."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    ensure_hero_pro_columns(conn)
+    updated = 0
+    for h in hero_stats:
+        hid = h.get("id")
+        if hid is None:
+            continue
+        cur.execute(
+            "UPDATE heroes SET pro_pick = ?, pro_win = ?, pro_ban = ? WHERE hero_id = ?",
+            (h.get("pro_pick", 0) or 0,
+             h.get("pro_win", 0) or 0,
+             h.get("pro_ban", 0) or 0,
+             hid),
+        )
+        if cur.rowcount:
+            updated += 1
+    conn.commit()
+    conn.close()
+    logger.info(f"Updated pro stats for {updated} heroes.")
+    return updated
+
+
 def fetch_hero_stats():
     cached = _load_cache()
     if cached is not None:
@@ -94,6 +136,7 @@ def _get_hero_name_map():
 
 def run_hero_verification():
     hero_stats = fetch_hero_stats()
+    update_hero_pro_stats(hero_stats)
     local_stats = _get_local_hero_stats()
     hero_names = _get_hero_name_map()
 

@@ -47,6 +47,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .section-gap { margin-bottom: 20px; }
 .muted-text { color: #888; font-size: 0.85rem; }
 .meta-cell { color: #888; font-size: 0.8rem; }
+.draw-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #374151;
+  color: #ccc;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
 
 /* Stats */
 .stats-grid {

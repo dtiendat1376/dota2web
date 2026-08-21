@@ -191,14 +191,20 @@ function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {recentMatches.map((m, i) => (
-                  <tr key={i}>
-                    <td className={m.team1_win ? 'winner' : ''}>{m.team1}</td>
-                    <td><strong>{m.score1} - {m.score2}</strong></td>
-                    <td className={!m.team1_win ? 'winner' : ''}>{m.team2}</td>
-                    <td>{m.datetime ? new Date(m.datetime).toLocaleDateString() : ''}</td>
-                  </tr>
-                ))}
+                {recentMatches.map((m, i) => {
+                  const isDraw = m.score1 === m.score2;
+                  return (
+                    <tr key={i}>
+                      <td className={!isDraw && m.team1_win ? 'winner' : ''}>{m.team1}</td>
+                      <td>
+                        <strong>{m.score1} - {m.score2}</strong>
+                        {isDraw && <span className="draw-badge">Draw</span>}
+                      </td>
+                      <td className={!isDraw && !m.team1_win ? 'winner' : ''}>{m.team2}</td>
+                      <td>{m.datetime ? new Date(m.datetime).toLocaleDateString() : ''}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

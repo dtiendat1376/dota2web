@@ -169,7 +169,7 @@ export default function H2HPredict() {
                           </td>
                           <td>{m.tournament}</td>
                           <td className={m.winner === h2hResult.team1 ? 'winner' : ''}>{m.team1}</td>
-                          <td className="score">{m.score}</td>
+                          <td className="score">{m.score}{!m.winner && <span className="draw-badge">Draw</span>}</td>
                           <td className={m.winner === h2hResult.team2 ? 'winner' : ''}>{m.team2}</td>
                           <td className="muted-text">Bo{m.best_of}</td>
                         </tr>

@@ -7,8 +7,8 @@ career endpoint, hero stats verification, bulk discovery).
 
 Quota model (anonymous tier: 2,950 calls/day, 60 calls/min):
   - One shared daily budget split into labelled buckets:
-      fetcher  -> GET /matches/{id}
-      mapper   -> GET /search
+      fetcher  -> GET /matches/{id}   (largest slice: match details are priority)
+      mapper   -> GET /search         (capped small; local index maps most names)
       other    -> heroes, heroStats, career, discovery
   - A call is counted toward the shared total only once a server response is
     received (non-429). Retries for 429 / network errors do not count.
@@ -42,31 +42,38 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 QUOTA_FILE = os.path.join(DATA_DIR, "api_quota.json")
 
 OPENDOTA_BASE = os.getenv("OPENDOTA_BASE", "https://api.opendota.com/api")
-OPENDOTA_TIMEOUT = int(os.getenv("OPENDOTA_TIMEOUT", "30"))
+OPENDOTA_TIMEOUT = int(os.getenv("OPENDOTA_TIMEOUT", "12"))
 DAILY_LIMIT = int(os.getenv("OPENDOTA_DAILY_LIMIT", "2950"))
 MIN_INTERVAL = float(os.getenv("OPENDOTA_MIN_INTERVAL", "1.11"))
 
 # Soft caps used for reporting and per-bucket throttling.
-FETCHER_QUOTA = DAILY_LIMIT * 4 // 5            # ~2360 calls/day (80%)
-MAPPER_QUOTA = DAILY_LIMIT - FETCHER_QUOTA      # ~590 calls/day (20%)
+# Mapper needs stay small: the pro-player index + match payload mining map
+# most names locally, so /search is only a fallback. The fetcher gets the
+# rest so match details can be backfilled as fast as the daily budget allows.
 OTHER_QUOTA = max(100, DAILY_LIMIT // 20)       # hard cap for live/utility calls
+MAPPER_QUOTA = min(int(os.getenv("OPENDOTA_MAPPER_QUOTA", "150")), DAILY_LIMIT // 4)
+FETCHER_QUOTA = max(0, DAILY_LIMIT - MAPPER_QUOTA - OTHER_QUOTA)
 
 BUCKETS = ("fetcher", "mapper", "other")
 _BUCKET_CAPS = {"fetcher": FETCHER_QUOTA, "mapper": MAPPER_QUOTA, "other": OTHER_QUOTA}
 
-_session = None
 _session_lock = threading.Lock()
+_session_local = threading.local()
 _last_call_time = 0.0
 
 
 def _get_session():
-    global _session
-    with _session_lock:
-        if _session is None:
-            session = requests.Session()
-            session.headers.update({"Accept": "application/json"})
-            _session = session
-        return _session
+    """Return a thread-local requests.Session.
+
+    Worker threads fetch concurrently, so each thread keeps its own session
+    (requests.Session is not guaranteed safe to share across threads).
+    """
+    session = getattr(_session_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update({"Accept": "application/json"})
+        _session_local.session = session
+    return session
 
 
 # ─── Quota persistence (fcntl-locked) ───────────────────────────────────
@@ -178,7 +185,7 @@ def _retry_after(resp):
 # ─── Public request entry point ─────────────────────────────────────────
 
 
-def api_get(path, params=None, bucket="other", max_retries=3, timeout=OPENDOTA_TIMEOUT):
+def api_get(path, params=None, bucket="other", max_retries=2, timeout=OPENDOTA_TIMEOUT):
     """GET an OpenDota endpoint under shared quota + rate limiting.
 
     Returns a requests.Response, or None when the bucket/daily quota is
@@ -202,7 +209,7 @@ def api_get(path, params=None, bucket="other", max_retries=3, timeout=OPENDOTA_T
             if resp.status_code == 429:
                 wait = _retry_after(resp)
                 if wait is None:
-                    wait = 60 * (2 ** attempt)
+                    wait = min(60 * (2 ** attempt), 120)
                 logger.warning(f"Rate limited on {path}. Sleeping {wait:.0f}s.")
                 time.sleep(wait)
                 continue
@@ -210,7 +217,7 @@ def api_get(path, params=None, bucket="other", max_retries=3, timeout=OPENDOTA_T
             return resp
         except requests.exceptions.RequestException as e:
             last_error = e
-            wait = min(5 * (2 ** attempt), 60)
+            wait = min(3 * (2 ** attempt), 15)
             logger.warning(
                 f"Request error on {path}: {e}. Retry {attempt + 1}/{max_retries} in {wait}s."
             )

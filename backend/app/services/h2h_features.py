@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from backend.app.models.models import Match, Team, Tournament
-from backend.app.utils import dedup_matches
+from backend.app.utils import dedup_matches, match_winner
 from backend.app.constants import PLAYER_COLS_T1, PLAYER_COLS_T2
 
 
@@ -46,9 +46,12 @@ def get_h2h(team1: str, team2: str, db: Session):
 
     t1_wins = 0
     for m in matches:
+        if match_winner(m) is None:
+            continue
         if (m.team1 == t1_name and m.team1_win) or (m.team2 == t1_name and not m.team1_win):
             t1_wins += 1
-    t2_wins = len(matches) - t1_wins
+    decisive = sum(1 for m in matches if match_winner(m) is not None)
+    t2_wins = decisive - t1_wins
 
     score_diffs = []
     for m in matches:
@@ -61,17 +64,19 @@ def get_h2h(team1: str, team2: str, db: Session):
     last5_t1_wins = sum(
         1
         for m in last5
-        if (m.team1 == t1_name and m.team1_win)
-        or (m.team2 == t1_name and not m.team1_win)
+        if match_winner(m) is not None
+        and ((m.team1 == t1_name and m.team1_win) or (m.team2 == t1_name and not m.team1_win))
     )
+    last5_decisive = sum(1 for m in last5 if match_winner(m) is not None)
 
     last10 = matches[-10:]
     last10_t1_wins = sum(
         1
         for m in last10
-        if (m.team1 == t1_name and m.team1_win)
-        or (m.team2 == t1_name and not m.team1_win)
+        if match_winner(m) is not None
+        and ((m.team1 == t1_name and m.team1_win) or (m.team2 == t1_name and not m.team1_win))
     )
+    last10_decisive = sum(1 for m in last10 if match_winner(m) is not None)
 
     t1_roster = set()
     t2_roster = set()
@@ -100,14 +105,18 @@ def get_h2h(team1: str, team2: str, db: Session):
 
     match_history = []
     for m in reversed(matches[-15:]):
-        winner = m.team1 if m.team1_win else m.team2
+        winner = match_winner(m)
+        if m.team1 == t1_name:
+            h1, h2, h1s, h2s = m.team1, m.team2, m.score1, m.score2
+        else:
+            h1, h2, h1s, h2s = m.team2, m.team1, m.score2, m.score1
         t = db.query(Tournament).filter(Tournament.tournament_id == m.tournament_id).first()
         match_history.append(
             {
                 "match_id": m.match_id,
-                "team1": m.team1,
-                "team2": m.team2,
-                "score": f"{m.score1}-{m.score2}",
+                "team1": h1,
+                "team2": h2,
+                "score": f"{h1s}-{h2s}",
                 "winner": winner,
                 "best_of": m.best_of,
                 "tournament": t.tournament_name if t else "Unknown",
@@ -121,15 +130,15 @@ def get_h2h(team1: str, team2: str, db: Session):
         "total_matches": len(matches),
         "team1_wins": t1_wins,
         "team2_wins": t2_wins,
-        "team1_wr": round(t1_wins / len(matches), 4),
-        "team2_wr": round(t2_wins / len(matches), 4),
+        "team1_wr": round(t1_wins / decisive, 4) if decisive else 0.5,
+        "team2_wr": round(t2_wins / decisive, 4) if decisive else 0.5,
         "h2h_score_diff": round(sum(score_diffs) / len(score_diffs), 3),
         "last5": {
             "total": len(last5),
             "team1_wins": last5_t1_wins,
-            "team2_wins": len(last5) - last5_t1_wins,
+            "team2_wins": last5_decisive - last5_t1_wins,
         },
-        "recent_10_wr": round(last10_t1_wins / len(last10), 4) if last10 else 0.5,
+        "recent_10_wr": round(last10_t1_wins / last10_decisive, 4) if last10_decisive else 0.5,
         "roster_overlap": len(t1_roster & t2_roster),
         "match_history": match_history,
     }

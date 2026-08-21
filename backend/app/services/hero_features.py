@@ -32,6 +32,8 @@ def get_hero_list(db: Session, sort_by="pick_count", attr=None):
             continue
         if attr and hero.primary_attr != attr:
             continue
+        pro_pick = hero.pro_pick or 0
+        pro_win = hero.pro_win or 0
         result.append({
             "hero_id": s.hero_id,
             "name": hero.localized_name,
@@ -40,6 +42,10 @@ def get_hero_list(db: Session, sort_by="pick_count", attr=None):
             "pick_count": s.pick_count,
             "wins": s.wins or 0,
             "win_rate": round((s.wins or 0) / s.pick_count, 4) if s.pick_count else 0,
+            "pro_pick": pro_pick,
+            "pro_win": pro_win,
+            "pro_ban": hero.pro_ban or 0,
+            "pro_win_rate": round(pro_win / pro_pick, 4) if pro_pick else 0,
             "avg_kills": round(s.avg_kills or 0, 1),
             "avg_deaths": round(s.avg_deaths or 0, 1),
             "avg_assists": round(s.avg_assists or 0, 1),
@@ -51,6 +57,8 @@ def get_hero_list(db: Session, sort_by="pick_count", attr=None):
     sort_keys = {
         "pick_count": lambda x: x["pick_count"],
         "win_rate": lambda x: x["win_rate"],
+        "pro_pick": lambda x: x["pro_pick"],
+        "pro_win_rate": lambda x: x["pro_win_rate"],
         "avg_kills": lambda x: x["avg_kills"],
         "avg_gpm": lambda x: x["avg_gpm"],
     }
@@ -98,6 +106,10 @@ def get_hero_detail(hero_id: int, db: Session):
         except (json.JSONDecodeError, TypeError):
             continue
 
+    pro_pick = hero.pro_pick or 0
+    pro_win = hero.pro_win or 0
+    pro_ban = hero.pro_ban or 0
+
     if not stats or not stats.pick_count:
         return {
             "hero_id": hero_id,
@@ -106,6 +118,10 @@ def get_hero_detail(hero_id: int, db: Session):
             "attack_type": hero.attack_type,
             "pick_count": 0,
             "ban_count": ban_count,
+            "pro_pick": pro_pick,
+            "pro_win": pro_win,
+            "pro_ban": pro_ban,
+            "pro_win_rate": round(pro_win / pro_pick, 4) if pro_pick else 0,
         }
 
     return {
@@ -117,6 +133,10 @@ def get_hero_detail(hero_id: int, db: Session):
         "ban_count": ban_count,
         "wins": stats.wins or 0,
         "win_rate": round((stats.wins or 0) / stats.pick_count, 4),
+        "pro_pick": pro_pick,
+        "pro_win": pro_win,
+        "pro_ban": pro_ban,
+        "pro_win_rate": round(pro_win / pro_pick, 4) if pro_pick else 0,
         "avg_kills": round(stats.avg_kills or 0, 1),
         "avg_deaths": round(stats.avg_deaths or 0, 1),
         "avg_assists": round(stats.avg_assists or 0, 1),

@@ -251,3 +251,5 @@
 2026-08-05T02:04:26.576930+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
 2026-08-05T02:12:36.477316+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
 2026-08-05T02:13:12.778028+00:00 map player=jieang error=HTTPSConnectionPool(host='api.opendota.com', port=443): Read timed out. (read timeout=30)
+2026-08-06T07:24:28.197311+00:00 game_id=8803706352 error=fetch failed
+2026-08-06T07:24:29.390598+00:00 game_id=8803167635 error=fetch failed

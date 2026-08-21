@@ -9,7 +9,7 @@ router = APIRouter()
 
 @router.get("/")
 def list_heroes(
-    sort: str = Query("pick_count", pattern="^(pick_count|win_rate|avg_kills|avg_gpm)$"),
+    sort: str = Query("pick_count", pattern="^(pick_count|win_rate|pro_pick|pro_win_rate|avg_kills|avg_gpm)$"),
     attr: str = Query(None),
     db: Session = Depends(get_db),
 ):

@@ -298,6 +298,7 @@ def map_batch(players, max_calls=None):
             logger.info("Mapper quota exhausted. Stopping.")
             break
 
+        unmapped_teams = []
         for team_name in db_teams:
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
@@ -307,29 +308,33 @@ def map_batch(players, max_calls=None):
             if existing and existing[0]:
                 state["skipped"] += 1
                 continue
+            unmapped_teams.append(team_name)
+        if not unmapped_teams:
+            continue
 
-            results = search_player(player_name)
-            calls_made += 1
+        results = search_player(player_name)
+        calls_made += 1
 
-            if results is None:
-                state["failed"] += 1
-                state["last_player"] = player_name
-                state["last_search_at"] = datetime.now(timezone.utc).isoformat()
-                _save_progress(state)
-                continue
-
-            steam32_id, confidence = disambiguate(results, player_name)
-            store_mapping(player_name, team_name, steam32_id, confidence)
-
-            state["mapped_today"] += 1
-            state["mapped_total"] += 1
+        if results is None:
+            state["failed"] += 1
             state["last_player"] = player_name
             state["last_search_at"] = datetime.now(timezone.utc).isoformat()
             _save_progress(state)
+            continue
 
-            if state["mapped_today"] % 50 == 0:
-                remaining = quota_remaining("mapper")
-                logger.info(f"Mapper progress: {state['mapped_today']} mapped, {MAPPER_QUOTA - remaining}/{MAPPER_QUOTA} quota used")
+        steam32_id, confidence = disambiguate(results, player_name)
+        for team_name in unmapped_teams:
+            store_mapping(player_name, team_name, steam32_id, confidence)
+
+        state["mapped_today"] += len(unmapped_teams)
+        state["mapped_total"] += len(unmapped_teams)
+        state["last_player"] = player_name
+        state["last_search_at"] = datetime.now(timezone.utc).isoformat()
+        _save_progress(state)
+
+        if state["mapped_today"] % 50 == 0:
+            remaining = quota_remaining("mapper")
+            logger.info(f"Mapper progress: {state['mapped_today']} mapped, {MAPPER_QUOTA - remaining}/{MAPPER_QUOTA} quota used")
 
     state["is_running"] = False
     state["started_at"] = None

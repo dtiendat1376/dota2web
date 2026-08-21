@@ -4,7 +4,10 @@ OpenDota match detail fetcher + player ID mapper (interleaved).
 Runs as a daemon thread started from FastAPI startup.
 Fetches /api/matches/{dota_game_id} and maps player names to Steam32 IDs.
 
-Rate limits: 2,950 calls/day shared 80/20 between fetcher and mapper.
+Rate limits: 2,950 calls/day shared between buckets; the fetcher gets the
+largest slice (match details are the priority), the mapper a small cap, and
+live/utility calls a hard cap. Failed matches are retried up to a bounded
+number of times and then marked permanently to stop wasting quota.
 Progress: tracked in data/opendota_progress.json + data/mapper_progress.json
 
 All HTTP + quota handling is delegated to backend.app.services.opendota_client.
@@ -12,8 +15,8 @@ All HTTP + quota handling is delegated to backend.app.services.opendota_client.
 
 import json
 import os
-import time
 import logging
+import concurrent.futures
 from datetime import datetime, date, timezone
 from threading import Event
 
@@ -38,6 +41,10 @@ DB_PATH = os.path.join(DATA_DIR, "dota2.db")
 HEROES_CACHE = os.path.join(DATA_DIR, "heroes.json")
 PROGRESS_FILE = os.path.join(DATA_DIR, "opendota_progress.json")
 ERROR_LOG = os.path.join(DATA_DIR, "fetch_errors.log")
+ATTEMPTS_FILE = os.path.join(DATA_DIR, "fetch_attempts.json")
+
+FETCH_WORKERS = int(os.getenv("OPENDOTA_FETCH_WORKERS", "3"))
+MAX_FETCH_RETRIES = int(os.getenv("OPENDOTA_MAX_RETRIES", "2"))
 
 logger = logging.getLogger("fetch_opendota")
 
@@ -126,6 +133,7 @@ def _run_mapper_batch(batch_size):
             continue
         if quota_remaining("mapper") <= 0:
             break
+        unmapped = []
         for team_name in teams:
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
@@ -134,15 +142,19 @@ def _run_mapper_batch(batch_size):
             conn.close()
             if existing and existing[0]:
                 continue
-            resp = api_get("/search", params={"q": player_name}, bucket="mapper")
-            if resp is None:
-                logger.warning(f"Mapper: no response for '{player_name}'. Stopping batch.")
-                return
-            if resp.status_code != 200:
-                logger.error(f"Search failed for '{player_name}': HTTP {resp.status_code}")
-                continue
-            results = resp.json()
-            steam32_id, confidence = _disambiguate(results, player_name)
+            unmapped.append(team_name)
+        if not unmapped:
+            continue
+        resp = api_get("/search", params={"q": player_name}, bucket="mapper")
+        if resp is None:
+            logger.warning(f"Mapper: no response for '{player_name}'. Stopping batch.")
+            return
+        if resp.status_code != 200:
+            logger.error(f"Search failed for '{player_name}': HTTP {resp.status_code}")
+            continue
+        results = resp.json()
+        steam32_id, confidence = _disambiguate(results, player_name)
+        for team_name in unmapped:
             _store_mapping(player_name, team_name, steam32_id, confidence)
 
 
@@ -166,6 +178,45 @@ def _get_progress():
 def _save_progress(state):
     with open(PROGRESS_FILE, "w") as f:
         json.dump(state, f, indent=2)
+
+
+# ─── Failure retry tracking ────────────────────────────────────────────
+# Some game IDs fail permanently (dead IDs -> 521/522 or read timeouts).
+# Without a cap the daily reset would re-fetch them forever. We track the
+# number of failed attempts per game_id and stop retrying past the cap.
+
+
+def _load_attempts():
+    if os.path.exists(ATTEMPTS_FILE):
+        try:
+            with open(ATTEMPTS_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_attempts(attempts):
+    with open(ATTEMPTS_FILE, "w") as f:
+        json.dump(attempts, f)
+
+
+def _bump_attempt(game_id):
+    attempts = _load_attempts()
+    attempts[str(game_id)] = attempts.get(str(game_id), 0) + 1
+    _save_attempts(attempts)
+
+
+def _clear_attempt(game_id):
+    attempts = _load_attempts()
+    if str(game_id) in attempts:
+        del attempts[str(game_id)]
+        _save_attempts(attempts)
+
+
+def _is_dead(game_id):
+    attempts = _load_attempts()
+    return attempts.get(str(game_id), 0) >= MAX_FETCH_RETRIES
 
 
 def _fetch_heroes():
@@ -237,11 +288,29 @@ def _mark_fetch_status(game_id, status):
 
 
 def _retry_failed_matches():
-    """Reset yesterday's transient failures to pending (one retry per day)."""
+    """Reset transient failures to pending, retire permanent ones.
+
+    Runs once per day. Matches that failed fewer times than the retry cap go
+    back to 'pending' for another attempt; matches past the cap are marked
+    'not_found' permanently so the daily reset stops wasting quota on them.
+    """
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
-        cur.execute("UPDATE matches SET fetch_status = 'pending' WHERE fetch_status = 'failed'")
+        cur.execute("SELECT dota_game_id FROM matches WHERE fetch_status = 'failed'")
+        failed_ids = [row[0] for row in cur.fetchall()]
+        for game_id in failed_ids:
+            if _is_dead(game_id):
+                cur.execute(
+                    "UPDATE matches SET fetch_status = 'not_found' WHERE dota_game_id = ?",
+                    (game_id,),
+                )
+                _clear_attempt(game_id)
+            else:
+                cur.execute(
+                    "UPDATE matches SET fetch_status = 'pending' WHERE dota_game_id = ?",
+                    (game_id,),
+                )
         conn.commit()
         conn.close()
     except sqlite3.OperationalError:
@@ -304,6 +373,91 @@ def _store_match(data):
 
     conn.commit()
     conn.close()
+
+
+def _handle_match_response(game_id, resp, state):
+    """Persist the result of one match fetch and update progress.
+
+    Runs on the caller (main) thread as worker futures complete, so all DB
+    and file writes stay single-threaded.
+    """
+    if resp is None:
+        _mark_fetch_status(game_id, "failed")
+        _bump_attempt(game_id)
+        state["failed"] += 1
+        state["last_game_id"] = game_id
+        state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+        _save_progress(state)
+        with open(ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now(timezone.utc).isoformat()} game_id={game_id} error=fetch failed\n")
+        return
+    if resp.status_code == 404:
+        _mark_fetch_status(game_id, "not_found")
+        _clear_attempt(game_id)
+        state["not_found"] += 1
+        state["last_game_id"] = game_id
+        state["fetched_today"] += 1
+        state["fetched_total"] += 1
+        state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+        _save_progress(state)
+        return
+    try:
+        data = resp.json()
+    except ValueError:
+        _mark_fetch_status(game_id, "failed")
+        _bump_attempt(game_id)
+        state["failed"] += 1
+        state["last_game_id"] = game_id
+        state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+        _save_progress(state)
+        return
+    if not data.get("players"):
+        _mark_fetch_status(game_id, "not_found")
+        _clear_attempt(game_id)
+        state["not_found"] += 1
+        state["last_game_id"] = game_id
+        state["fetched_today"] += 1
+        state["fetched_total"] += 1
+        state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+        _save_progress(state)
+        return
+    _store_match(data)
+    _clear_attempt(game_id)
+    state["fetched_today"] += 1
+    state["fetched_total"] += 1
+    state["last_game_id"] = game_id
+    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+    _save_progress(state)
+    if state["fetched_today"] % 100 == 0:
+        fetcher_used = FETCHER_QUOTA - quota_remaining("fetcher")
+        logger.info(f"Fetch progress: {state['fetched_today']} fetched, {fetcher_used}/{FETCHER_QUOTA} quota")
+
+
+def _fetch_batch(game_ids, stop_event, state):
+    """Fetch a batch of match details concurrently.
+
+    HTTP calls run on a small thread pool; the shared rate limiter in
+    opendota_client keeps total throughput under the per-minute cap. DB
+    writes and progress updates happen in the caller thread via
+    _handle_match_response.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as executor:
+        futures = {
+            executor.submit(api_get, f"/matches/{game_id}", bucket="fetcher"): game_id
+            for game_id in game_ids
+        }
+        for future in concurrent.futures.as_completed(futures):
+            if stop_event.is_set():
+                for f in futures:
+                    f.cancel()
+                break
+            game_id = futures[future]
+            try:
+                resp = future.result()
+            except Exception as e:
+                logger.error(f"Unexpected error fetching {game_id}: {e}")
+                resp = None
+            _handle_match_response(game_id, resp, state)
 
 
 def _run_initial_discovery():
@@ -380,61 +534,10 @@ def fetch_loop(stop_event=None):
 
         if remaining > 0:
             batch_end = min(game_idx + BATCH_SIZE, len(pending))
-            for i in range(game_idx, batch_end):
-                if stop_event.is_set():
-                    state["is_running"] = False
-                    _save_progress(state)
-                    return
-                if quota_remaining("fetcher") <= 0:
-                    break
-                game_id = pending[i]
-                resp = api_get(f"/matches/{game_id}", bucket="fetcher")
-                if resp is None:
-                    _mark_fetch_status(game_id, "failed")
-                    state["failed"] += 1
-                    state["last_game_id"] = game_id
-                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                    _save_progress(state)
-                    with open(ERROR_LOG, "a", encoding="utf-8") as f:
-                        f.write(f"{datetime.now(timezone.utc).isoformat()} game_id={game_id} error=fetch failed\n")
-                    time.sleep(5)
-                    continue
-                if resp.status_code == 404:
-                    _mark_fetch_status(game_id, "not_found")
-                    state["not_found"] += 1
-                    state["last_game_id"] = game_id
-                    state["fetched_today"] += 1
-                    state["fetched_total"] += 1
-                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                    _save_progress(state)
-                    continue
-                try:
-                    data = resp.json()
-                except ValueError:
-                    _mark_fetch_status(game_id, "failed")
-                    state["failed"] += 1
-                    state["last_game_id"] = game_id
-                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                    _save_progress(state)
-                    continue
-                if not data.get("players"):
-                    _mark_fetch_status(game_id, "not_found")
-                    state["not_found"] += 1
-                    state["last_game_id"] = game_id
-                    state["fetched_today"] += 1
-                    state["fetched_total"] += 1
-                    state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                    _save_progress(state)
-                    continue
-                _store_match(data)
-                state["fetched_today"] += 1
-                state["fetched_total"] += 1
-                state["last_game_id"] = game_id
-                state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-                _save_progress(state)
-                if state["fetched_today"] % 100 == 0:
-                    fetcher_used = FETCHER_QUOTA - quota_remaining("fetcher")
-                    logger.info(f"Fetch progress: {state['fetched_today']} fetched, {fetcher_used}/{FETCHER_QUOTA} quota")
+            batch = [gid for gid in pending[game_idx:batch_end] if not _is_dead(gid)]
+            batch = batch[:max(0, min(len(batch), quota_remaining("fetcher")))]
+            if batch:
+                _fetch_batch(batch, stop_event, state)
             game_idx = batch_end
 
         if quota_remaining("mapper") > 0:

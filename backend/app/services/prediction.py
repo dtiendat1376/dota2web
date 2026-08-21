@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from backend.app.models.models import Match, Team, Tournament, Prediction
 from backend.app.services.team_features import get_team_features
 from backend.app.services.h2h_features import get_h2h
-from backend.app.utils import dedup_matches
+from backend.app.utils import dedup_matches, match_winner
 
 
 def predict_match(team1: str, team2: str, db: Session, match_id: int = None):
@@ -147,7 +147,7 @@ def predict_match(team1: str, team2: str, db: Session, match_id: int = None):
     if match_id:
         match = db.query(Match).filter(Match.match_id == match_id).first()
         if match:
-            actual_winner = match.team1 if match.team1_win else match.team2
+            actual_winner = match_winner(match)
             pred = Prediction(
                 match_id=match_id,
                 team1_win_prob=t1_prob,
@@ -186,7 +186,7 @@ def get_prediction_history(db: Session, limit: int = 20):
                 "team1": m.team1,
                 "team2": m.team2,
                 "score": f"{m.score1}-{m.score2}",
-                "winner": m.team1 if m.team1_win else m.team2,
+                "winner": match_winner(m),
                 "tournament": t.tournament_name if t else "Unknown",
                 "datetime": m.match_datetime.isoformat() if m.match_datetime else None,
             }
@@ -223,7 +223,10 @@ def backtest(team1: str, team2: str, db: Session, limit: int = 50):
     total_brier = 0
 
     for m in matches:
-        actual_winner = m.team1 if m.team1_win else m.team2
+        actual_winner = match_winner(m)
+
+        if actual_winner is None:
+            continue
 
         pred = predict_match(t1_name, t2_name, db, match_id=m.match_id)
 

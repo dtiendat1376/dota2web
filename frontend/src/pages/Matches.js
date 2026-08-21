@@ -60,22 +60,28 @@ function Matches() {
               </tr>
             </thead>
             <tbody>
-              {matches.map((m, i) => (
-                <tr key={i}>
-                  <td className="tournament">{m.tournament}</td>
-                  <td className={m.team1_win ? 'winner' : ''}><strong>{m.team1}</strong></td>
-                  <td className="score">{m.score1} - {m.score2}</td>
-                  <td className={!m.team1_win ? 'winner' : ''}><strong>{m.team2}</strong></td>
-                  <td>{m.best_of != null ? `Bo${m.best_of}` : '—'}</td>
-                  <td>{m.team1_win ? m.team1 : m.team2}</td>
-                  <td>{m.datetime ? new Date(m.datetime).toLocaleDateString() : ''}</td>
-                  <td>
-                    <button className="detail-btn" onClick={() => navigate(`/matches/${m.match_id}`)}>
-                      Detail
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {matches.map((m, i) => {
+                const isDraw = m.score1 === m.score2;
+                return (
+                  <tr key={i}>
+                    <td className="tournament">{m.tournament}</td>
+                    <td className={!isDraw && m.team1_win ? 'winner' : ''}><strong>{m.team1}</strong></td>
+                    <td className="score">
+                      {m.score1} - {m.score2}
+                      {isDraw && <span className="draw-badge">Draw</span>}
+                    </td>
+                    <td className={!isDraw && !m.team1_win ? 'winner' : ''}><strong>{m.team2}</strong></td>
+                    <td>{m.best_of != null ? `Bo${m.best_of}` : '—'}</td>
+                    <td>{isDraw ? 'Draw' : (m.team1_win ? m.team1 : m.team2)}</td>
+                    <td>{m.datetime ? new Date(m.datetime).toLocaleDateString() : ''}</td>
+                    <td>
+                      <button className="detail-btn" onClick={() => navigate(`/matches/${m.match_id}`)}>
+                        Detail
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
